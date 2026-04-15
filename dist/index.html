@@ -1,0 +1,485 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <title>课堂互动云盘</title>
+    <style>
+        :root {
+            --primary: #409EFF;
+            --bg: #f0f2f5;
+            --border: #dcdfe6;
+        }
+
+        body {
+            font-family: sans-serif;
+            background: var(--bg);
+            margin: 0;
+            padding-bottom: 50px;
+        }
+
+        .container {
+            max-width: 800px;
+            margin: 40px auto;
+            background: white;
+            padding: 30px 40px;
+            border-radius: 12px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+        }
+
+        /* 容量进度条 */
+        .quota-bar {
+            height: 10px;
+            background: #eee;
+            border-radius: 5px;
+            margin: 10px 0;
+            overflow: hidden;
+        }
+
+        .quota-fill {
+            height: 100%;
+            background: var(--primary);
+            transition: 0.3s;
+        }
+
+        .quota-text {
+            font-size: 13px;
+            color: #666;
+        }
+
+        /* 聊天悬浮小屏 */
+        #chat-widget {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            width: 320px;
+            height: 450px;
+            background: white;
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
+            display: flex;
+            flex-direction: column;
+            z-index: 1000;
+        }
+
+        #chat-header {
+            background: var(--primary);
+            color: white;
+            padding: 10px;
+            border-radius: 10px 10px 0 0;
+            font-weight: bold;
+            display: flex;
+            justify-content: space-between;
+        }
+
+        #chat-msgs {
+            flex: 1;
+            overflow-y: auto;
+            padding: 10px;
+            font-size: 13px;
+            background: #fafafa;
+        }
+
+        .msg-item {
+            margin-bottom: 10px;
+            padding: 8px;
+            border-radius: 5px;
+            background: #fff;
+            border: 1px solid #eee;
+        }
+
+        .msg-user {
+            font-weight: bold;
+            color: var(--primary);
+            margin-right: 5px;
+        }
+
+        .msg-time {
+            font-size: 11px;
+            color: #999;
+        }
+
+        .msg-link {
+            display: block;
+            margin-top: 5px;
+            padding: 5px;
+            background: #ecf5ff;
+            border: 1px solid #b3d8ff;
+            color: #409eff;
+            text-decoration: none;
+            border-radius: 3px;
+            text-align: center;
+        }
+
+        #chat-input-area {
+            padding: 10px;
+            border-top: 1px solid #eee;
+            display: flex;
+        }
+
+        #chat-input {
+            flex: 1;
+            padding: 5px;
+            border: 1px solid #ccc;
+            border-radius: 3px;
+            outline: none;
+        }
+
+        /* 基础样式 */
+        .upload-area {
+            border: 2px dashed var(--primary);
+            padding: 30px;
+            cursor: pointer;
+            border-radius: 8px;
+            margin: 20px 0;
+            background: #f9f9f9;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+        }
+
+        th,
+        td {
+            padding: 12px;
+            border-bottom: 1px solid #eee;
+            text-align: left;
+        }
+
+        button {
+            padding: 10px 15px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            background: var(--primary);
+            color: white;
+            font-size: 14px;
+        }
+
+        button.danger {
+            background: #F56C6C;
+            padding: 6px 12px;
+            font-size: 13px;
+        }
+
+        button.share {
+            background: #67C23A;
+            padding: 6px 12px;
+            font-size: 13px;
+        }
+
+        button.text-btn {
+            background: none;
+            color: var(--primary);
+            padding: 0;
+            text-decoration: underline;
+            margin-top: 15px;
+        }
+
+        input[type="text"],
+        input[type="password"] {
+            padding: 12px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            width: 100%;
+            box-sizing: border-box;
+            margin-bottom: 15px;
+            font-size: 14px;
+        }
+
+        /* 默认隐藏视图 */
+        #login-view,
+        #register-view,
+        #app-view {
+            display: none;
+        }
+
+        /* 🚀 聊天按钮独立样式（完美居中魔法） */
+        #chat-btn {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            border-radius: 50%;
+            width: 60px;
+            height: 60px;
+            font-size: 15px;
+            font-weight: bold;
+            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.2);
+            display: none;
+            /* 默认隐藏，由 JS 控制 */
+            cursor: pointer;
+            border: none;
+            background: var(--primary);
+            color: white;
+            /* 完美居中 */
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            line-height: 1.2;
+            letter-spacing: 1px;
+        }
+    </style>
+</head>
+
+<body>
+
+    <div class="container">
+        <div id="login-view">
+            <h2 style="text-align:center; color: var(--primary); margin-bottom: 30px;">课堂云盘登录</h2>
+            <input type="text" id="u" placeholder="请输入学号/账号">
+            <input type="password" id="p" placeholder="请输入密码">
+            <button onclick="login()" style="width:100%; font-size: 16px; padding: 12px;">登 录</button>
+            <div style="text-align: center;">
+                <button class="text-btn" onclick="showView('register-view')">没有账号？点击使用邀请码注册</button>
+            </div>
+        </div>
+
+        <div id="register-view">
+            <h2 style="text-align:center; color: #67C23A; margin-bottom: 30px;">学生账号注册</h2>
+            <input type="text" id="reg-u" placeholder="设置你的学号/账号">
+            <input type="password" id="reg-p" placeholder="设置登录密码">
+            <input type="text" id="reg-phone" placeholder="请输入邀请码 (你的手机号)">
+            <button onclick="register()" style="width:100%; background:#67C23A; font-size: 16px; padding: 12px;">注 册 账
+                号</button>
+            <div style="text-align: center;">
+                <button class="text-btn" onclick="showView('login-view')">已有账号？返回登录</button>
+            </div>
+        </div>
+
+        <div id="app-view">
+            <div
+                style="display:flex; justify-content:space-between; align-items: center; border-bottom: 2px solid var(--primary); padding-bottom: 10px;">
+                <h2 id="hello" style="margin: 0;"></h2>
+                <button onclick="logout()" class="danger">退出账号</button>
+            </div>
+
+            <div class="quota-text" style="margin-top: 15px;">我的存储空间: <span id="used-val"
+                    style="font-weight: bold; color: var(--primary);">0</span> / 500MB</div>
+            <div class="quota-bar">
+                <div id="quota-fill" class="quota-fill" style="width: 0%"></div>
+            </div>
+
+            <div class="upload-area" id="uploadArea" onclick="document.getElementById('fi').click()">
+                <div style="font-size: 30px; margin-bottom: 10px;">☁️</div>
+                将作业拖拽到此处，或点击上传
+                <input type="file" id="fi" style="display:none" onchange="upload(this.files[0])">
+            </div>
+
+            <h3 style="margin-top: 30px;">我的作业库</h3>
+            <table>
+                <thead>
+                    <tr>
+                        <th>文件名</th>
+                        <th>大小</th>
+                        <th>操作</th>
+                    </tr>
+                </thead>
+                <tbody id="list"></tbody>
+            </table>
+        </div>
+    </div>
+
+    <div id="chat-widget" style="display:none">
+        <div id="chat-header">
+            <span>💬 课堂聊天室</span>
+            <span onclick="document.getElementById('chat-widget').style.display='none'"
+                style="cursor:pointer; padding: 0 5px;">▼</span>
+        </div>
+        <div id="chat-msgs"></div>
+        <div id="chat-input-area">
+            <input type="text" id="chat-input" placeholder="输入消息..." onkeypress="if(event.keyCode==13) sendChat()">
+            <button onclick="sendChat()" style="margin-left:5px">发送</button>
+        </div>
+    </div>
+
+    <button id="chat-btn" onclick="document.getElementById('chat-widget').style.display='flex'">
+        <span>聊</span>
+        <span>天</span>
+    </button>
+
+    <script>
+        let token = localStorage.getItem('token') || '';
+        let user = localStorage.getItem('user') || '';
+
+        // 🚀 核心修复：独立控制视图切换
+        const showView = (viewId) => {
+            document.getElementById('login-view').style.display = 'none';
+            document.getElementById('register-view').style.display = 'none';
+            document.getElementById('app-view').style.display = 'none';
+
+            document.getElementById(viewId).style.display = 'block';
+
+            // 只有在工作台才显示聊天按钮，并且必须用 flex，否则会覆盖居中样式！
+            if (viewId === 'app-view') {
+                document.getElementById('chat-btn').style.display = 'flex';
+            } else {
+                document.getElementById('chat-btn').style.display = 'none';
+                document.getElementById('chat-widget').style.display = 'none';
+            }
+        };
+
+        const api = async (path, opt = {}) => {
+            if (!opt.headers) opt.headers = {};
+            opt.headers['Authorization'] = `Bearer ${token}`;
+            const res = await fetch(path, opt);
+            if (res.status === 401) { logout(); return; }
+            return res;
+        };
+
+        const login = async () => {
+            const fd = new FormData(); fd.append('username', document.getElementById('u').value); fd.append('password', document.getElementById('p').value);
+            try {
+                const res = await fetch('/api/login', { method: 'POST', body: fd });
+                if (res.ok) {
+                    const data = await res.json();
+                    token = data.token; user = data.username;
+                    localStorage.setItem('token', token); localStorage.setItem('user', user);
+                    init();
+                } else {
+                    alert('登录失败：账号或密码错误');
+                }
+            } catch (e) {
+                alert('网络连接失败');
+            }
+        };
+
+        const register = async () => {
+            const fd = new FormData();
+            fd.append('username', document.getElementById('reg-u').value);
+            fd.append('password', document.getElementById('reg-p').value);
+            fd.append('phone', document.getElementById('reg-phone').value);
+            try {
+                const res = await fetch('/api/register', { method: 'POST', body: fd });
+                if (res.ok) {
+                    alert('注册成功！请返回登录。');
+                    document.getElementById('u').value = document.getElementById('reg-u').value;
+                    showView('login-view'); // 注册成功自动跳回登录页
+                } else {
+                    alert((await res.json()).detail || '注册失败');
+                }
+            } catch (e) {
+                alert('网络连接失败');
+            }
+        };
+
+        const logout = () => { localStorage.clear(); location.reload(); };
+
+        const init = async () => {
+            if (!token) {
+                showView('login-view');
+                return;
+            }
+
+            showView('app-view');
+            document.getElementById('hello').innerText = `同学: ${user}`;
+            refresh();
+            loadChat();
+
+            if (!window.chatInterval) {
+                window.chatInterval = setInterval(loadChat, 3000);
+            }
+        };
+
+        const refresh = async () => {
+            const res = await api('/api/list');
+            const data = await res.json();
+
+            const usedMB = (data.used / 1024 / 1024).toFixed(1);
+            document.getElementById('used-val').innerText = usedMB + 'MB';
+            document.getElementById('quota-fill').style.width = (data.used / data.quota * 100) + '%';
+
+            const tbody = document.getElementById('list');
+            tbody.innerHTML = '';
+            if (data.files.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="3" style="text-align:center; color:#999; padding: 20px;">还没有上传作业，赶快拖拽文件上来吧！</td></tr>';
+            } else {
+                data.files.forEach(f => {
+                    tbody.innerHTML += `<tr>
+                    <td>${f.name}</td><td>${(f.size / 1024).toFixed(1)}KB</td>
+                    <td style="display: flex; gap: 8px;">
+                        <button class="share" onclick="shareToChat('${f.name}')">发到聊天室</button>
+                        <button class="danger" onclick="del('${f.name}')">删除</button>
+                    </td>
+                </tr>`;
+                });
+            }
+        };
+
+        const upload = async (file) => {
+            if (!file) return;
+            const fd = new FormData(); fd.append('file', file);
+            const res = await api('/api/upload', { method: 'POST', body: fd });
+            if (res.ok) { refresh(); } else { alert((await res.json()).detail); }
+        };
+
+        const del = async (name) => {
+            if (confirm(`确定删除 ${name}？`)) { await api(`/api/files/${name}`, { method: 'DELETE' }); refresh(); }
+        };
+
+        const loadChat = async () => {
+            const res = await fetch('/api/chat');
+            const msgs = await res.json();
+            const box = document.getElementById('chat-msgs');
+            const isAtBottom = box.scrollHeight - box.scrollTop <= box.clientHeight + 50;
+            box.innerHTML = msgs.map(m => `
+            <div class="msg-item">
+                <div style="margin-bottom: 4px;"><span class="msg-user">${m.user}</span> <span class="msg-time">${m.time}</span></div>
+                <div>${m.text}</div>
+                ${m.code ? `<a href="/api/s/${m.code}" target="_blank" class="msg-link">📥 点击下载分享文件</a>` : ''}
+            </div>
+        `).join('');
+            if (isAtBottom) box.scrollTop = box.scrollHeight;
+        };
+
+        const sendChat = async () => {
+            const input = document.getElementById('chat-input');
+            if (!input.value.trim()) return;
+            const fd = new FormData(); fd.append('content', input.value);
+            await api('/api/chat', { method: 'POST', body: fd });
+            input.value = ''; loadChat();
+        };
+
+        const shareToChat = async (name) => {
+            const res = await api(`/api/share/${name}`, { method: 'POST' });
+            const data = await res.json();
+            const fd = new FormData();
+            fd.append('content', `我分享了文件: ${name}`);
+            fd.append('share_code', data.code);
+            await api('/api/chat', { method: 'POST', body: fd });
+
+            document.getElementById('chat-widget').style.display = 'flex';
+            loadChat();
+        };
+
+        // ✅ Bug #4 修复：实现拖拽上传
+        const uploadArea = document.getElementById('uploadArea');
+        uploadArea.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            uploadArea.style.background = '#e6f7ff';
+            uploadArea.style.borderColor = '#409EFF';
+        });
+        uploadArea.addEventListener('dragleave', () => {
+            uploadArea.style.background = '#f9f9f9';
+            uploadArea.style.borderColor = 'var(--primary)';
+        });
+        uploadArea.addEventListener('drop', (e) => {
+            e.preventDefault();
+            if (e.dataTransfer.files.length > 0) {
+                upload(e.dataTransfer.files[0]);
+            }
+            uploadArea.style.background = '#f9f9f9';
+            uploadArea.style.borderColor = 'var(--primary)';
+        });
+
+        init();
+    </script>
+</body>
+
+</html>

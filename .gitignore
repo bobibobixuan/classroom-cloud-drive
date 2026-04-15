@@ -1,0 +1,14 @@
+# 忽略编译出来的可执行文件
+*.exe
+
+# 忽略 Python 缓存和打包临时文件
+__pycache__/
+build/
+*.spec
+
+# 忽略本地数据库和学生上传的作业数据
+classroom.db
+classroom_data/
+
+# 忽略环境变量或配置文件（如果有的话）
+.env
