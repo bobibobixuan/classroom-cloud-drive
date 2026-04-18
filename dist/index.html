@@ -183,6 +183,141 @@
             margin-top: 15px;
         }
 
+        /* 🎨 上传进度条样式 */
+        #upload-progress-container {
+            display: none;
+            margin: 20px 0;
+            padding: 15px;
+            background: #f0f9ff;
+            border: 1px solid #b3d8ff;
+            border-radius: 4px;
+        }
+
+        .progress-bar {
+            width: 100%;
+            height: 24px;
+            background: #eee;
+            border-radius: 4px;
+            overflow: hidden;
+            margin-bottom: 10px;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #409EFF, #66B1FF);
+            width: 0%;
+            transition: width 0.3s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-size: 12px;
+            font-weight: bold;
+        }
+
+        /* 账号管理弹窗 */
+        .modal-overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.5);
+            z-index: 2000;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .modal-content {
+            background: white;
+            padding: 30px;
+            border-radius: 8px;
+            max-width: 400px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+            animation: slideIn 0.3s;
+        }
+
+        @keyframes slideIn {
+            from { transform: translateY(-50px); opacity: 0; }
+            to { transform: translateY(0); opacity: 1; }
+        }
+
+        .modal-header {
+            font-size: 18px;
+            font-weight: bold;
+            margin-bottom: 20px;
+            color: #333;
+        }
+
+        .modal-input {
+            width: 100%;
+            padding: 10px;
+            margin-bottom: 15px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            box-sizing: border-box;
+        }
+
+        .modal-buttons {
+            display: flex;
+            gap: 10px;
+            justify-content: flex-end;
+        }
+
+        .modal-buttons button {
+            padding: 8px 15px;
+            font-size: 14px;
+        }
+
+        .modal-buttons .cancel {
+            background: #dcdfe6;
+            color: #333;
+        }
+
+        /* 🎯 表格排序 */
+        th {
+            cursor: pointer;
+            user-select: none;
+            position: relative;
+        }
+
+        th:hover {
+            background: #f5f5f5;
+        }
+
+        th.sortable::after {
+            content: " ⬍";
+            font-size: 11px;
+            opacity: 0.5;
+        }
+
+        th.sort-asc::after {
+            content: " ▲";
+            opacity: 1;
+        }
+
+        th.sort-desc::after {
+            content: " ▼";
+            opacity: 1;
+        }
+
+        /* 聊天图片 */
+        .chat-image {
+            max-width: 200px;
+            max-height: 150px;
+            border-radius: 4px;
+            margin-top: 5px;
+            cursor: pointer;
+        }
+
+        .image-upload-btn {
+            background: #67C23A;
+            margin-left: 5px;
+            padding: 6px 10px;
+            font-size: 12px;
+        }
+
         input[type="text"],
         input[type="password"] {
             padding: 12px;
@@ -257,13 +392,28 @@
             <div
                 style="display:flex; justify-content:space-between; align-items: center; border-bottom: 2px solid var(--primary); padding-bottom: 10px;">
                 <h2 id="hello" style="margin: 0;"></h2>
-                <button onclick="logout()" class="danger">退出账号</button>
+                <div style="display: flex; gap: 10px;">
+                    <button onclick="showRenameModal()" style="background: #67C23A; font-size: 13px; padding: 8px 12px;">改用户名</button>
+                    <button onclick="showDeleteModal()" class="danger" style="font-size: 13px; padding: 8px 12px;">注销账号</button>
+                    <button onclick="logout()" class="danger" style="font-size: 13px; padding: 8px 12px;">退出登录</button>
+                </div>
             </div>
 
             <div class="quota-text" style="margin-top: 15px;">我的存储空间: <span id="used-val"
                     style="font-weight: bold; color: var(--primary);">0</span> / 500MB</div>
             <div class="quota-bar">
                 <div id="quota-fill" class="quota-fill" style="width: 0%"></div>
+            </div>
+
+            <!-- 🎨 上传进度条 -->
+            <div id="upload-progress-container">
+                <div style="font-size: 13px; margin-bottom: 8px;">正在上传: <span id="upload-filename"></span></div>
+                <div class="progress-bar">
+                    <div id="progress-fill" class="progress-fill" style="width: 0%;">0%</div>
+                </div>
+                <div style="font-size: 12px; color: #666;">
+                    <span id="upload-status">0 / 0 MB</span>
+                </div>
             </div>
 
             <div class="upload-area" id="uploadArea" onclick="document.getElementById('fi').click()">
@@ -276,8 +426,8 @@
             <table>
                 <thead>
                     <tr>
-                        <th>文件名</th>
-                        <th>大小</th>
+                        <th class="sortable" onclick="sortTable('name')">文件名</th>
+                        <th class="sortable" onclick="sortTable('size')">大小</th>
                         <th>操作</th>
                     </tr>
                 </thead>
@@ -296,6 +446,8 @@
         <div id="chat-input-area">
             <input type="text" id="chat-input" placeholder="输入消息..." onkeypress="if(event.keyCode==13) sendChat()">
             <button onclick="sendChat()" style="margin-left:5px">发送</button>
+            <button class="image-upload-btn" onclick="document.getElementById('chat-image-input').click()">📷 图片</button>
+            <input type="file" id="chat-image-input" style="display:none" accept="image/*" onchange="sendImageToChat(this.files[0])">
         </div>
     </div>
 
@@ -303,6 +455,33 @@
         <span>聊</span>
         <span>天</span>
     </button>
+
+    <!-- 🎨 改用户名弹窗 -->
+    <div id="rename-modal" class="modal-overlay">
+        <div class="modal-content">
+            <div class="modal-header">修改用户名</div>
+            <input type="text" id="new-username" class="modal-input" placeholder="请输入新的用户名">
+            <div class="modal-buttons">
+                <button class="cancel" onclick="closeRenameModal()">取消</button>
+                <button onclick="confirmRename()">确认修改</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 🎨 注销账号弹窗 -->
+    <div id="delete-modal" class="modal-overlay">
+        <div class="modal-content">
+            <div class="modal-header" style="color: #F56C6C;">确认注销账号</div>
+            <div style="margin-bottom: 15px; color: #666; font-size: 14px;">
+                ⚠️ 注销账号将<strong>永久删除</strong>你的所有数据，此操作无法撤销。
+            </div>
+            <input type="password" id="delete-password" class="modal-input" placeholder="请输入密码以确认">
+            <div class="modal-buttons">
+                <button class="cancel" onclick="closeDeleteModal()">取消</button>
+                <button class="danger" onclick="confirmDelete()">确认注销</button>
+            </div>
+        </div>
+    </div>
 
     <script>
         let token = localStorage.getItem('token') || '';
@@ -395,32 +574,242 @@
             document.getElementById('used-val').innerText = usedMB + 'MB';
             document.getElementById('quota-fill').style.width = (data.used / data.quota * 100) + '%';
 
+            window.filesData = data.files;
+            renderFileList(data.files);
+        };
+
+        const renderFileList = (files) => {
             const tbody = document.getElementById('list');
             tbody.innerHTML = '';
-            if (data.files.length === 0) {
+            if (files.length === 0) {
                 tbody.innerHTML = '<tr><td colspan="3" style="text-align:center; color:#999; padding: 20px;">还没有上传作业，赶快拖拽文件上来吧！</td></tr>';
             } else {
-                data.files.forEach(f => {
+                files.forEach((f, idx) => {
+                    const fileId = `file-${idx}`;
                     tbody.innerHTML += `<tr>
                     <td>${f.name}</td><td>${(f.size / 1024).toFixed(1)}KB</td>
-                    <td style="display: flex; gap: 8px;">
-                        <button class="share" onclick="shareToChat('${f.name}')">发到聊天室</button>
-                        <button class="danger" onclick="del('${f.name}')">删除</button>
+                    <td style="display: flex; gap: 5px; flex-wrap: wrap;">
+                        <button class="share" style="padding: 4px 8px; font-size: 12px;" data-filename="${f.name}" onclick="downloadDirect(this.getAttribute('data-filename'))">📥 下载</button>
+                        <button class="share" style="padding: 4px 8px; font-size: 12px;" data-filename="${f.name}" onclick="shareToChat(this.getAttribute('data-filename'))">💬 分享</button>
+                        <button class="danger" style="padding: 4px 8px; font-size: 12px;" data-filename="${f.name}" onclick="del(this.getAttribute('data-filename'))">🗑️ 删除</button>
                     </td>
                 </tr>`;
                 });
             }
         };
 
+        // 📊 表格排序
+        let sortState = { column: null, asc: true };
+        const sortTable = (column) => {
+            if (sortState.column === column) {
+                sortState.asc = !sortState.asc;
+            } else {
+                sortState.column = column;
+                sortState.asc = true;
+            }
+
+            let files = [...window.filesData];
+            
+            if (column === 'name') {
+                files.sort((a, b) => {
+                    const cmp = a.name.localeCompare(b.name);
+                    return sortState.asc ? cmp : -cmp;
+                });
+            } else if (column === 'size') {
+                files.sort((a, b) => {
+                    const cmp = a.size - b.size;
+                    return sortState.asc ? cmp : -cmp;
+                });
+            }
+
+            renderFileList(files);
+            updateSortHeaders(column);
+        };
+
+        const updateSortHeaders = (column) => {
+            document.querySelectorAll('th.sortable').forEach(th => {
+                th.classList.remove('sort-asc', 'sort-desc');
+            });
+
+            const th = document.querySelectorAll('th.sortable')[column === 'name' ? 0 : 1];
+            if (th) {
+                th.classList.add(sortState.asc ? 'sort-asc' : 'sort-desc');
+            }
+        };
+
+        // 📥 直接下载
+        const downloadDirect = async (filename) => {
+            try {
+                const res = await api(`/api/download/${encodeURIComponent(filename)}`);
+                if (res.ok) {
+                    const blob = await res.blob();
+                    const url = window.URL.createObjectURL(blob);
+                    const link = document.createElement('a');
+                    link.href = url;
+                    link.download = filename;
+                    document.body.appendChild(link);
+                    link.click();
+                    document.body.removeChild(link);
+                    window.URL.revokeObjectURL(url);
+                } else {
+                    alert('下载失败');
+                }
+            } catch (e) {
+                alert('下载出错');
+            }
+        };
+
         const upload = async (file) => {
             if (!file) return;
-            const fd = new FormData(); fd.append('file', file);
-            const res = await api('/api/upload', { method: 'POST', body: fd });
-            if (res.ok) { refresh(); } else { alert((await res.json()).detail); }
+            
+            const fd = new FormData(); 
+            fd.append('file', file);
+            
+            // 显示进度条
+            document.getElementById('upload-progress-container').style.display = 'block';
+            document.getElementById('upload-filename').innerText = file.name;
+            document.getElementById('progress-fill').style.width = '0%';
+            document.getElementById('progress-fill').innerText = '0%';
+            
+            // 使用 XMLHttpRequest 以便监听 progress 事件
+            return new Promise((resolve, reject) => {
+                const xhr = new XMLHttpRequest();
+                
+                // 监听上传进度
+                xhr.upload.addEventListener('progress', (e) => {
+                    if (e.lengthComputable) {
+                        const percentComplete = (e.loaded / e.total) * 100;
+                        const progress = percentComplete.toFixed(0);
+                        document.getElementById('progress-fill').style.width = progress + '%';
+                        document.getElementById('progress-fill').innerText = progress + '%';
+                        
+                        const uploadedMB = (e.loaded / 1024 / 1024).toFixed(1);
+                        const totalMB = (e.total / 1024 / 1024).toFixed(1);
+                        document.getElementById('upload-status').innerText = `${uploadedMB} / ${totalMB} MB`;
+                    }
+                });
+                
+                xhr.addEventListener('load', () => {
+                    if (xhr.status === 200) {
+                        // 隐藏进度条
+                        setTimeout(() => {
+                            document.getElementById('upload-progress-container').style.display = 'none';
+                        }, 1000);
+                        refresh();
+                        resolve();
+                    } else {
+                        try {
+                            const data = JSON.parse(xhr.responseText);
+                            alert(data.detail || '上传失败');
+                        } catch (e) {
+                            alert('上传失败');
+                        }
+                        document.getElementById('upload-progress-container').style.display = 'none';
+                        reject();
+                    }
+                });
+                
+                xhr.addEventListener('error', () => {
+                    alert('网络连接失败');
+                    document.getElementById('upload-progress-container').style.display = 'none';
+                    reject();
+                });
+                
+                xhr.open('POST', '/api/upload');
+                xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+                xhr.send(fd);
+            });
         };
 
         const del = async (name) => {
             if (confirm(`确定删除 ${name}？`)) { await api(`/api/files/${name}`, { method: 'DELETE' }); refresh(); }
+        };
+
+        // 📝 改用户名
+        const showRenameModal = () => {
+            document.getElementById('rename-modal').style.display = 'flex';
+            document.getElementById('new-username').value = '';
+            document.getElementById('new-username').focus();
+        };
+
+        const closeRenameModal = () => {
+            document.getElementById('rename-modal').style.display = 'none';
+        };
+
+        const confirmRename = async () => {
+            const newUsername = document.getElementById('new-username').value.trim();
+            if (!newUsername) {
+                alert('请输入新的用户名');
+                return;
+            }
+            if (newUsername.length < 2) {
+                alert('用户名长度不能少于2个字符');
+                return;
+            }
+            if (newUsername === user) {
+                alert('新用户名与现有用户名相同');
+                return;
+            }
+
+            try {
+                const fd = new FormData();
+                fd.append('new_username', newUsername);
+                const res = await api('/api/rename', { method: 'POST', body: fd });
+                if (res.ok) {
+                    const data = await res.json();
+                    user = newUsername;
+                    localStorage.setItem('user', user);
+                    alert('用户名修改成功！');
+                    closeRenameModal();
+                    init();
+                } else {
+                    const data = await res.json();
+                    alert(data.detail || '修改失败');
+                }
+            } catch (e) {
+                alert('网络连接失败');
+            }
+        };
+
+        // 🗑️ 注销账号
+        const showDeleteModal = () => {
+            if (!confirm('⚠️ 注销账号将永久删除所有数据，确定吗？')) {
+                return;
+            }
+            document.getElementById('delete-modal').style.display = 'flex';
+            document.getElementById('delete-password').value = '';
+            document.getElementById('delete-password').focus();
+        };
+
+        const closeDeleteModal = () => {
+            document.getElementById('delete-modal').style.display = 'none';
+        };
+
+        const confirmDelete = async () => {
+            const password = document.getElementById('delete-password').value;
+            if (!password) {
+                alert('请输入密码');
+                return;
+            }
+
+            if (!confirm('⚠️ 最后确认：注销后数据将无法恢复，是否继续？')) {
+                return;
+            }
+
+            try {
+                const fd = new FormData();
+                fd.append('password', password);
+                const res = await api('/api/delete-account', { method: 'POST', body: fd });
+                if (res.ok) {
+                    alert('账号已注销，感谢使用！');
+                    logout();
+                } else {
+                    const data = await res.json();
+                    alert(data.detail || '注销失败');
+                }
+            } catch (e) {
+                alert('网络连接失败');
+            }
         };
 
         const loadChat = async () => {
@@ -432,18 +821,115 @@
             <div class="msg-item">
                 <div style="margin-bottom: 4px;"><span class="msg-user">${m.user}</span> <span class="msg-time">${m.time}</span></div>
                 <div>${m.text}</div>
-                ${m.code ? `<a href="/api/s/${m.code}" target="_blank" class="msg-link">📥 点击下载分享文件</a>` : ''}
+                ${m.image ? `<img src="${m.image}" class="chat-image" onclick="window.open(this.src)">` : ''}
+                ${m.code ? `<a href="javascript:downloadShare('${m.code}')" class="msg-link">📥 点击下载分享文件</a>` : ''}
             </div>
         `).join('');
             if (isAtBottom) box.scrollTop = box.scrollHeight;
         };
 
+        // 🔍 验证分享文件有效性
+        const downloadShare = async (code) => {
+            try {
+                const res = await fetch(`/api/validate/${code}`);
+                const data = await res.json();
+                
+                if (data.valid) {
+                    window.location.href = `/api/s/${code}`;
+                } else {
+                    alert(`⚠️ 无法下载：${data.reason}`);
+                }
+            } catch (e) {
+                alert('验证失败，请稍后重试');
+            }
+        };
+
         const sendChat = async () => {
             const input = document.getElementById('chat-input');
-            if (!input.value.trim()) return;
-            const fd = new FormData(); fd.append('content', input.value);
+            const message = input.value.trim();
+            if (!message) return;  // 文本不能为空时发送
+            
+            const fd = new FormData(); 
+            fd.append('content', message);
             await api('/api/chat', { method: 'POST', body: fd });
-            input.value = ''; loadChat();
+            input.value = ''; 
+            loadChat();
+        };
+
+        // 🖼️ 发送图片到聊天室
+        const sendImageToChat = async (file) => {
+            if (!file) return;
+            
+            // 检查文件大小（限制 5MB）
+            if (file.size > 5 * 1024 * 1024) {
+                alert('图片过大，请选择小于 5MB 的图片');
+                document.getElementById('chat-image-input').value = '';
+                return;
+            }
+
+            const reader = new FileReader();
+            reader.onload = async (e) => {
+                try {
+                    // 转换为 Base64
+                    let base64Data = e.target.result;
+                    
+                    // 轻量级压缩：如果是 PNG 或 JPG，进行质量压缩
+                    if (file.type === 'image/jpeg' || file.type === 'image/png') {
+                        base64Data = await compressImage(file, base64Data);
+                    }
+                    
+                    const fd = new FormData();
+                    fd.append('image_data', base64Data);
+                    const res = await api('/api/chat', { method: 'POST', body: fd });
+                    
+                    if (res.ok) {
+                        // 清空输入
+                        document.getElementById('chat-image-input').value = '';
+                        loadChat();
+                    } else {
+                        alert('发送图片失败');
+                    }
+                } catch (err) {
+                    console.error(err);
+                    alert('发送图片出错');
+                    document.getElementById('chat-image-input').value = '';
+                }
+            };
+            
+            reader.onerror = () => {
+                alert('读取图片失败');
+                document.getElementById('chat-image-input').value = '';
+            };
+            
+            reader.readAsDataURL(file);
+        };
+
+        // 📉 图片压缩
+        const compressImage = (file, base64) => {
+            return new Promise((resolve) => {
+                const img = new Image();
+                img.onload = () => {
+                    const canvas = document.createElement('canvas');
+                    let width = img.width;
+                    let height = img.height;
+
+                    // 如果宽度超过 800px，进行缩放
+                    if (width > 800) {
+                        height = (height * 800) / width;
+                        width = 800;
+                    }
+
+                    canvas.width = width;
+                    canvas.height = height;
+                    const ctx = canvas.getContext('2d');
+                    ctx.drawImage(img, 0, 0, width, height);
+
+                    // 压缩质量（0.7 = 70% 质量）
+                    const compressed = canvas.toDataURL(file.type, 0.7);
+                    resolve(compressed);
+                };
+                img.src = base64;
+            });
         };
 
         const shareToChat = async (name) => {
