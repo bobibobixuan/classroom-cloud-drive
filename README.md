@@ -32,6 +32,16 @@ The runtime is split into two layers:
 - Notification center with unread badges and approval reminders.
 - Split admin frontend navigation: admin settings and audit logs are now separate pages.
 
+### Admin Console Layout
+
+- Admin settings entry: /admin/users
+- Repository settings: /admin/repos
+- Public share settings: /admin/shares
+- Recycle cleanup: /admin/recycle
+- Audit log center: /admin/logs
+
+Regular admins only see the sections allowed by their delegated admin scopes. Super admin keeps full access.
+
 ### Architecture
 
 #### Go Proxy Layer
@@ -90,6 +100,8 @@ If the local backend is reachable, Go uses local dev mode automatically. Otherwi
 go build -o pan.exe .
 ```
 
+The default Windows build artifact in this repository is pan.exe.
+
 ### Run Modes
 
 - Local dev mode: use local server.py on 127.0.0.1:4321.
@@ -113,6 +125,7 @@ go run .
 
 - Notification popup is now rendered as a fixed top-level layer to avoid clipping.
 - Super admin identity handling and admin scope propagation were fixed.
+- Admin role assignment now falls back to default delegated scopes when an admin is created or promoted without explicit scope selection.
 - Admin console was reorganized into subpages:
   - /admin/users
   - /admin/repos
@@ -174,6 +187,16 @@ Before pushing, make sure git status only shows intended source changes.
 - 通知中心支持未读红点和审批提醒。
 - 管理后台前端已拆成独立配置页和独立日志页。
 
+### 管理后台布局
+
+- 管理员配置入口：/admin/users
+- 仓库设置：/admin/repos
+- 公开链接设置：/admin/shares
+- 回收站清理：/admin/recycle
+- 操作日志中心：/admin/logs
+
+普通管理员只会看到自己被下放权限允许的分区，超级管理员保留完整访问权限。
+
 ### 架构说明
 
 #### Go 代理层
@@ -232,6 +255,8 @@ go run .
 go build -o pan.exe .
 ```
 
+当前仓库默认输出的 Windows 可执行文件名为 pan.exe。
+
 ### 运行模式
 
 - 本地联调模式：直接连本地 server.py。
@@ -255,6 +280,7 @@ go run .
 
 - 通知气泡调整为顶层 fixed 浮层，避免被裁切。
 - 超级管理员身份同步和管理员 scope 继承逻辑已修复。
+- 当创建或提升子管理员时，如果没有显式勾选权限范围，后端会自动补齐默认下放权限。
 - 管理后台拆分为独立子页面：
   - /admin/users
   - /admin/repos
