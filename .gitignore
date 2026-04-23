@@ -1,14 +1,35 @@
-# 忽略编译出来的可执行文件
+# Go / Windows 构建产物
 *.exe
+*.dll
+*.so
+*.dylib
+*.out
 
-# 忽略 Python 缓存和打包临时文件
+# Python 虚拟环境与缓存
+.venv/
+venv/
 __pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+
+# Python 打包与构建临时文件
 build/
 *.spec
 
-# 忽略本地数据库和学生上传的作业数据
+# 本地数据库与运行时数据
 classroom.db
+classroom.db-shm
+classroom.db-wal
 classroom_data/
+repo_storage/
 
-# 忽略环境变量或配置文件（如果有的话）
+# 本地配置
 .env
+.env.*
+
+# 编辑器与日志
+*.log
+.DS_Store
