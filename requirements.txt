@@ -1,0 +1,5 @@
+fastapi
+uvicorn
+python-multipart
+passlib[bcrypt]
+bcrypt==4.0.1
