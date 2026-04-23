@@ -5,6 +5,7 @@ import { showToast } from './ui.js';
 export const state = reactive({
   token: localStorage.getItem('token') || '',
   user: localStorage.getItem('user') || '',
+  realName: '',
   isAdmin: false,
   isSuperAdmin: false,
   role: '',
@@ -16,6 +17,7 @@ export const state = reactive({
   myRepos: [],
   hallRepos: [],
   adminUsers: [],
+  adminRegistrationWhitelist: [],
   adminRepos: [],
   adminShares: [],
   recycleBinItems: [],
@@ -48,6 +50,7 @@ export function isBusy(key) {
 function syncIdentity(payload) {
   const has = (key) => Object.prototype.hasOwnProperty.call(payload || {}, key);
   state.user = has('username') ? (payload.username || '') : state.user;
+  state.realName = has('real_name') ? (payload.real_name || '') : state.realName;
   state.isAdmin = has('is_admin') ? !!payload.is_admin : state.isAdmin;
   state.isSuperAdmin = has('is_super_admin') ? !!payload.is_super_admin : state.isSuperAdmin;
   if (has('role')) {
@@ -67,6 +70,7 @@ function resetCollections() {
   state.myRepos = [];
   state.hallRepos = [];
   state.adminUsers = [];
+  state.adminRegistrationWhitelist = [];
   state.adminRepos = [];
   state.adminShares = [];
   state.recycleBinItems = [];
@@ -93,6 +97,7 @@ function clearSessionState() {
   stopChatStream();
   state.token = '';
   state.user = '';
+  state.realName = '';
   state.isAdmin = false;
   state.isSuperAdmin = false;
   state.role = '';
@@ -476,6 +481,16 @@ export const actions = {
     return data;
   },
 
+  async loadAdminRegistrationWhitelist() {
+    if (!state.isAdmin) {
+      state.adminRegistrationWhitelist = [];
+      return { items: [] };
+    }
+    const data = await jsonWithAuth('/api/admin/registration-whitelist');
+    state.adminRegistrationWhitelist = data.items || [];
+    return data;
+  },
+
   async loadAdminRepos() {
     if (!state.isAdmin) {
       state.adminRepos = [];
@@ -560,6 +575,17 @@ export const actions = {
     await this.loadAdminUsers();
   },
 
+  async importRegistrationWhitelistByAdmin(file) {
+    if (!file) {
+      throw new Error('请先选择名单文件');
+    }
+    const formData = new FormData();
+    formData.append('file', file);
+    const data = await jsonWithAuth('/api/admin/registration-whitelist/import', { method: 'POST', body: formData });
+    await this.loadAdminRegistrationWhitelist();
+    return data;
+  },
+
   async resetUserPasswordByAdmin(username, newPassword) {
     const formData = new FormData();
     formData.append('new_password', newPassword);
@@ -591,6 +617,7 @@ export const actions = {
       await this.loadAdminUsers();
     } else {
       state.adminUsers = [];
+      state.adminRegistrationWhitelist = [];
       state.adminRepos = [];
       state.adminShares = [];
       state.recycleBinItems = [];

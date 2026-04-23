@@ -21,3 +21,25 @@ export function stopEvent(event) {
   event.preventDefault();
   event.stopPropagation();
 }
+
+export function splitAccountDisplay(username, realName = '') {
+  const primaryName = (username || '').trim();
+  const secondaryName = (realName || '').trim();
+  if (!primaryName) {
+    return { primary: '', secondary: '' };
+  }
+  if (!secondaryName) {
+    return { primary: primaryName, secondary: '' };
+  }
+  const suffix = `_${secondaryName}`;
+  if (primaryName.endsWith(suffix) && primaryName.length > suffix.length) {
+    return {
+      primary: primaryName.slice(0, -suffix.length),
+      secondary: secondaryName,
+    };
+  }
+  return {
+    primary: primaryName,
+    secondary: secondaryName === primaryName ? '' : secondaryName,
+  };
+}

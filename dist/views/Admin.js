@@ -1,7 +1,7 @@
-import { computed, onMounted, reactive, RouterLink, useRoute, useRouter, watch } from '../deps.js';
+import { computed, onMounted, reactive, ref, RouterLink, useRoute, useRouter, watch } from '../deps.js';
 import { actions, state } from '../store.js';
 import { confirmAction, showToast } from '../ui.js';
-import { formatSize } from '../utils.js';
+import { formatSize, splitAccountDisplay } from '../utils.js';
 
 const scopeOptions = [
   { value: 'user_lifecycle', label: '账号管理' },
@@ -13,6 +13,11 @@ const scopeOptions = [
 ];
 
 const defaultAdminScopes = ['user_lifecycle', 'quota_management', 'transfer_ownership', 'share_governance', 'audit_logs'];
+
+const userPanels = [
+  { key: 'directory', title: '用户目录', description: '创建账号、调整角色、配额与资产。' },
+  { key: 'whitelist', title: '注册白名单', description: '导入手机号实名名单并查看注册流转。' },
+];
 
 const configSections = [
   {
@@ -61,6 +66,9 @@ export default {
     });
     const userDrafts = reactive({});
     const shareDrafts = reactive({});
+    const whitelistInput = ref(null);
+    const whitelistImportFile = ref(null);
+    const activeUserPanel = ref('directory');
 
     const hasScope = (scope) => state.isSuperAdmin || (state.adminScopes || []).includes(scope);
     const activeSection = computed(() => route.meta.adminSection || 'users');
@@ -72,6 +80,18 @@ export default {
       }
       return '当前管理员配置已拆分为独立分区，点击上方分类查看对应设置。';
     });
+    const whitelistStats = computed(() => {
+      const items = state.adminRegistrationWhitelist || [];
+      const pending = items.filter((item) => item.status !== 'registered').length;
+      return {
+        total: items.length,
+        pending,
+        registered: items.length - pending,
+      };
+    });
+    const setUserPanel = (panelKey) => {
+      activeUserPanel.value = panelKey;
+    };
 
     const normalizeAdminScopes = (role, scopes) => {
       if (role !== 'admin') return [];
@@ -148,7 +168,10 @@ export default {
 
     const loadSectionData = async () => {
       const tasks = [];
-      if (activeSection.value === 'users' && hasScope('user_lifecycle')) tasks.push(actions.loadAdminUsers());
+      if (activeSection.value === 'users' && hasScope('user_lifecycle')) {
+        tasks.push(actions.loadAdminUsers());
+        tasks.push(actions.loadAdminRegistrationWhitelist());
+      }
       if (activeSection.value === 'repos' && hasScope('audit_logs')) tasks.push(actions.loadAdminRepos());
       if (activeSection.value === 'shares' && hasScope('share_governance')) tasks.push(actions.loadAdminShares());
       if (activeSection.value === 'recycle' && hasScope('storage_cleanup')) tasks.push(actions.loadRecycleBin());
@@ -209,6 +232,28 @@ export default {
         await load();
       } catch (error) {
         showToast(error.message || '创建用户失败', 'error');
+      }
+    };
+
+    const selectWhitelistFile = (event) => {
+      whitelistImportFile.value = event?.target?.files?.[0] || null;
+    };
+
+    const importWhitelist = async () => {
+      if (!whitelistImportFile.value) {
+        showToast('请先选择 .txt 或 .csv 名单文件', 'warning');
+        return;
+      }
+      try {
+        const result = await actions.importRegistrationWhitelistByAdmin(whitelistImportFile.value);
+        showToast(`白名单导入完成，新增 ${result.inserted || 0} 条，更新 ${result.updated || 0} 条`, 'success');
+        whitelistImportFile.value = null;
+        if (whitelistInput.value) {
+          whitelistInput.value.value = '';
+        }
+        await load();
+      } catch (error) {
+        showToast(error.message || '导入白名单失败', 'error');
       }
     };
 
@@ -382,6 +427,8 @@ export default {
       return '普通用户';
     };
 
+    const accountDisplay = (username, realName = '') => splitAccountDisplay(username, realName);
+
     const scopeLabelText = (scopes) => {
       const labels = (scopes || []).map((scope) => scopeOptions.find((item) => item.value === scope)?.label || scope);
       return labels.length ? labels.join(' / ') : '无下放权限';
@@ -406,6 +453,13 @@ export default {
       resetChat,
       createForm,
       createUser,
+      userPanels,
+      activeUserPanel,
+      setUserPanel,
+      whitelistInput,
+      whitelistStats,
+      selectWhitelistFile,
+      importWhitelist,
       ensureUserDraft,
       ensureShareDraft,
       saveQuota,
@@ -422,6 +476,7 @@ export default {
       toggleCreateScope,
       toggleUserScope,
       roleLabel,
+      accountDisplay,
       scopeLabelText,
       hasScope,
       formatLogTarget,
@@ -460,7 +515,28 @@ export default {
       </section>
 
       <section v-if="activeSection === 'users' && hasScope('user_lifecycle')" class="space-y-6">
-        <section class="rounded-[32px] border border-slate-200 bg-white px-6 py-6 shadow-sm">
+        <section class="grid gap-3 md:grid-cols-2">
+          <button
+            v-for="panel in userPanels"
+            :key="panel.key"
+            type="button"
+            class="rounded-[28px] border px-5 py-5 text-left transition"
+            :class="activeUserPanel === panel.key ? 'border-sky-400 bg-sky-50 shadow-lg shadow-sky-100' : 'border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50'"
+            @click="setUserPanel(panel.key)"
+          >
+            <div class="flex items-start justify-between gap-3">
+              <div>
+                <div class="text-base font-semibold text-slate-900">{{ panel.title }}</div>
+                <div class="mt-1 text-sm text-slate-500">{{ panel.description }}</div>
+              </div>
+              <div v-if="panel.key === 'whitelist'" class="rounded-full bg-white/90 px-3 py-1 text-xs font-semibold text-slate-500 shadow-sm">
+                {{ whitelistStats.pending }} 待注册
+              </div>
+            </div>
+          </button>
+        </section>
+
+        <section v-if="activeUserPanel === 'directory'" class="rounded-[32px] border border-slate-200 bg-white px-6 py-6 shadow-sm">
           <div class="flex items-center justify-between gap-4">
             <div>
               <h3 class="text-xl font-semibold text-slate-900">创建新用户</h3>
@@ -488,13 +564,58 @@ export default {
           </div>
         </section>
 
-        <section class="overflow-hidden rounded-[32px] border border-slate-200 bg-white">
+        <section v-if="activeUserPanel === 'whitelist'" class="rounded-[32px] border border-slate-200 bg-white px-6 py-6 shadow-sm">
+          <div class="flex flex-wrap items-start justify-between gap-4">
+            <div>
+              <h3 class="text-xl font-semibold text-slate-900">注册白名单导入</h3>
+              <p class="mt-2 text-sm text-slate-500">上传 .txt 或 .csv，支持“手机号,真实姓名”和“真实姓名,手机号”两种格式。导入时会自动匹配历史已注册手机号。</p>
+            </div>
+            <div class="rounded-[24px] bg-slate-50 px-4 py-3 text-sm text-slate-600">
+              <div>总名额 {{ whitelistStats.total }}</div>
+              <div class="mt-1">待注册 {{ whitelistStats.pending }} · 已注册 {{ whitelistStats.registered }}</div>
+            </div>
+          </div>
+          <div class="mt-5 flex flex-wrap items-center gap-3">
+            <input ref="whitelistInput" type="file" accept=".txt,.csv,text/plain,text/csv" class="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none" @change="selectWhitelistFile">
+            <button class="rounded-2xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white" @click="importWhitelist">上传并导入名单</button>
+          </div>
+          <div class="mt-5 overflow-hidden rounded-[28px] border border-slate-200">
+            <div class="grid grid-cols-[11rem_9rem_10rem_minmax(0,1fr)] gap-3 border-b border-slate-100 bg-slate-50 px-4 py-3 text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">
+              <div>手机号</div>
+              <div>真实姓名</div>
+              <div>状态</div>
+              <div>注册结果</div>
+            </div>
+            <div v-if="state.adminRegistrationWhitelist.length" class="divide-y divide-slate-100">
+              <div v-for="entry in state.adminRegistrationWhitelist" :key="entry.phone" class="grid grid-cols-[11rem_9rem_10rem_minmax(0,1fr)] gap-3 px-4 py-3 text-sm text-slate-600">
+                <div class="font-medium text-slate-900">{{ entry.phone }}</div>
+                <div>{{ entry.real_name }}</div>
+                <div>
+                  <span class="rounded-full px-2 py-1 text-xs font-semibold" :class="entry.status === 'registered' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'">
+                    {{ entry.status === 'registered' ? '已注册' : '待注册' }}
+                  </span>
+                </div>
+                <div class="min-w-0">
+                  <div class="truncate text-slate-900">{{ entry.registered_username || '尚未注册' }}</div>
+                  <div class="mt-1 text-xs text-slate-400">导入：{{ entry.imported_at || '未知时间' }} · {{ entry.imported_by || '未知管理员' }}</div>
+                  <div v-if="entry.registered_at" class="mt-1 text-xs text-slate-400">注册时间：{{ entry.registered_at }}</div>
+                </div>
+              </div>
+            </div>
+            <div v-else class="px-4 py-10 text-center text-sm text-slate-500">当前还没有导入任何注册白名单。</div>
+          </div>
+        </section>
+
+        <section v-if="activeUserPanel === 'directory'" class="overflow-hidden rounded-[32px] border border-slate-200 bg-white">
           <div class="border-b border-slate-100 px-5 py-4 text-lg font-semibold text-slate-900">用户管理</div>
           <div class="divide-y divide-slate-100">
             <div v-for="user in state.adminUsers" :key="user.username" class="flex flex-wrap items-center justify-between gap-4 px-5 py-4">
               <div class="min-w-0 flex-1">
                 <div class="flex flex-wrap items-center gap-2">
-                  <div class="font-semibold text-slate-900">{{ user.username }}</div>
+                  <div class="flex min-w-0 flex-wrap items-baseline gap-2 font-semibold text-slate-900">
+                    <span class="truncate">{{ accountDisplay(user.username, user.real_name).primary }}</span>
+                    <span v-if="accountDisplay(user.username, user.real_name).secondary" class="text-xs font-medium text-slate-400">{{ accountDisplay(user.username, user.real_name).secondary }}</span>
+                  </div>
                   <span class="rounded-full px-2 py-1 text-xs font-semibold" :class="user.is_super_admin ? 'bg-amber-100 text-amber-700' : (user.is_admin ? 'bg-sky-100 text-sky-700' : 'bg-slate-100 text-slate-600')">{{ roleLabel(user) }}</span>
                   <span v-if="user.is_disabled" class="rounded-full bg-rose-100 px-2 py-1 text-xs font-semibold text-rose-700">已冻结</span>
                 </div>

@@ -1,6 +1,7 @@
 import { computed, onMounted, onUnmounted, ref, RouterView, useRoute, useRouter } from '../deps.js';
 import { actions, state } from '../store.js';
 import { showToast, uiState, toggleChat } from '../ui.js';
+import { splitAccountDisplay } from '../utils.js';
 import Sidebar from './Sidebar.js';
 import ChatDrawer from './ChatDrawer.js';
 import ToastStack from './ToastStack.js';
@@ -23,6 +24,7 @@ export default {
     const pageTitle = computed(() => route.meta.title || '工作台');
     const notificationsOpen = ref(false);
     const unreadCount = computed(() => state.notificationUnreadCount || 0);
+    const accountDisplay = computed(() => splitAccountDisplay(state.user, state.realName));
     let refreshTimer = null;
 
     const refreshHeaderState = async () => {
@@ -82,6 +84,7 @@ export default {
       actions,
       state,
       uiState,
+      accountDisplay,
       pageTitle,
       notificationsOpen,
       unreadCount,
@@ -104,7 +107,10 @@ export default {
                 <h1 class="mt-1 text-2xl font-bold text-slate-900 md:text-3xl">{{ pageTitle }}</h1>
               </div>
               <div class="relative flex flex-wrap items-center gap-2">
-                <span class="rounded-full bg-sky-100 px-3 py-1 text-xs font-semibold text-sky-700">{{ state.user || '未登录' }}</span>
+                <span class="inline-flex items-baseline gap-2 rounded-full bg-sky-100 px-3 py-1 text-xs font-semibold text-sky-700">
+                  <span>{{ accountDisplay.primary || '未登录' }}</span>
+                  <span v-if="accountDisplay.secondary" class="font-medium text-sky-500/70">{{ accountDisplay.secondary }}</span>
+                </span>
                 <span v-if="state.isAdmin" class="rounded-full px-3 py-1 text-xs font-semibold" :class="state.isSuperAdmin ? 'bg-amber-100 text-amber-700' : 'bg-emerald-100 text-emerald-700'">
                   {{ state.isSuperAdmin ? '超级管理员' : '子管理员' }}
                 </span>
@@ -126,7 +132,7 @@ export default {
           </main>
 
           <div
-            class="absolute inset-y-0 right-0 z-20 hidden w-[26rem] max-w-full overflow-hidden border-l border-slate-200/80 bg-white/92 shadow-2xl transition-transform duration-300 md:block"
+            class="fixed inset-y-0 right-0 z-30 hidden h-screen w-[26rem] max-w-full overflow-hidden border-l border-slate-200/80 bg-white/92 shadow-2xl transition-transform duration-300 md:block"
             :class="uiState.chatOpen ? 'translate-x-0' : 'translate-x-full'"
           >
             <ChatDrawer />

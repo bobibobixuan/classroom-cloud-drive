@@ -11,34 +11,88 @@ export default {
     const mode = ref(route.query.mode === 'register' ? 'register' : 'login');
     const loginForm = ref({ username: '', password: '' });
     const registerForm = ref({ username: '', password: '', phone: '' });
+    const loginFeedback = ref({ type: '', message: '' });
+    const registerFeedback = ref({ type: '', message: '' });
 
-    const switchMode = (nextMode) => {
+    const setFeedback = (target, type, message) => {
+      target.value = { type, message };
+    };
+
+    const clearFeedback = (target) => {
+      target.value = { type: '', message: '' };
+    };
+
+    const switchMode = (nextMode, options = {}) => {
       mode.value = nextMode;
+      if (!options.preserveLoginFeedback) {
+        clearFeedback(loginFeedback);
+      }
+      if (!options.preserveRegisterFeedback) {
+        clearFeedback(registerFeedback);
+      }
     };
 
     const submitLogin = async () => {
+      if (!loginForm.value.username.trim()) {
+        setFeedback(loginFeedback, 'warning', '请输入账号后再登录。');
+        return;
+      }
+      if (!loginForm.value.password) {
+        setFeedback(loginFeedback, 'warning', '请输入密码后再登录。');
+        return;
+      }
       try {
+        clearFeedback(loginFeedback);
         await actions.login(loginForm.value.username, loginForm.value.password);
+        setFeedback(loginFeedback, 'success', '登录成功，正在进入个人云盘。');
         showToast('登录成功', 'success');
         router.push(route.query.redirect || '/drive');
       } catch (error) {
+        const message = error.message || '登录失败';
+        if (message.includes('账号或密码错误')) {
+          setFeedback(loginFeedback, 'error', '账号或密码错误，请检查后重试。');
+        } else if (message.includes('被冻结')) {
+          setFeedback(loginFeedback, 'error', message);
+        } else {
+          setFeedback(loginFeedback, 'error', `登录失败：${message}`);
+        }
         showToast(error.message || '登录失败', 'error');
       }
     };
 
     const submitRegister = async () => {
+      if (!registerForm.value.username.trim()) {
+        setFeedback(registerFeedback, 'warning', '请先填写昵称。');
+        return;
+      }
+      if (!registerForm.value.password) {
+        setFeedback(registerFeedback, 'warning', '请先设置登录密码。');
+        return;
+      }
+      if (!registerForm.value.phone.trim()) {
+        setFeedback(registerFeedback, 'warning', '请输入已录入白名单的手机号。');
+        return;
+      }
       try {
+        clearFeedback(registerFeedback);
         const data = await actions.register(
           registerForm.value.username,
           registerForm.value.password,
           registerForm.value.phone,
         );
-        showToast(data.is_admin ? '注册成功，当前账号已获得管理员权限' : '注册成功，请返回登录', 'success');
-        loginForm.value.username = registerForm.value.username.trim();
+        const successMessage = data.is_admin
+          ? `注册成功，当前账号已获得管理员权限。登录账号：${data.username}`
+          : `注册成功，请使用账号 ${data.username} 登录`;
+        setFeedback(registerFeedback, 'success', '注册成功，已自动生成实名账号。请切换到登录页继续。');
+        setFeedback(loginFeedback, 'success', successMessage);
+        showToast(successMessage, 'success');
+        loginForm.value.username = data.username || registerForm.value.username.trim();
         loginForm.value.password = '';
         registerForm.value.password = '';
-        switchMode('login');
+        switchMode('login', { preserveLoginFeedback: true });
       } catch (error) {
+        const message = error.message || '注册失败';
+        setFeedback(registerFeedback, 'error', `注册失败：${message}`);
         showToast(error.message || '注册失败', 'error');
       }
     };
@@ -47,7 +101,10 @@ export default {
       mode,
       loginForm,
       registerForm,
+      loginFeedback,
+      registerFeedback,
       switchMode,
+      clearFeedback,
       submitLogin,
       submitRegister,
     };
@@ -81,19 +138,29 @@ export default {
             <div v-if="mode === 'login'" class="mt-8 space-y-4">
               <div>
                 <h2 class="text-3xl font-bold text-slate-900">欢迎回来</h2>
+                <p class="mt-2 text-sm leading-7 text-slate-500">请输入你的账号和密码。如果密码错误或账号不存在，会在下方直接提示。</p>
               </div>
-              <input v-model="loginForm.username" class="w-full rounded-3xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none" placeholder="请输入学号或账号">
-              <input v-model="loginForm.password" type="password" class="w-full rounded-3xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none" placeholder="请输入密码">
+              <input v-model="loginForm.username" class="w-full rounded-3xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none" placeholder="请输入学号或账号" @input="clearFeedback(loginFeedback)">
+              <input v-model="loginForm.password" type="password" class="w-full rounded-3xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none" placeholder="请输入密码" @input="clearFeedback(loginFeedback)">
+              <div v-if="loginFeedback.message" class="rounded-[24px] px-4 py-3 text-sm leading-7"
+                :class="loginFeedback.type === 'error' ? 'border border-rose-200 bg-rose-50 text-rose-700' : (loginFeedback.type === 'success' ? 'border border-emerald-200 bg-emerald-50 text-emerald-700' : 'border border-amber-200 bg-amber-50 text-amber-700')">
+                {{ loginFeedback.message }}
+              </div>
               <button class="w-full rounded-3xl bg-sky-600 px-4 py-3 text-sm font-semibold text-white shadow-lg shadow-sky-200" @click="submitLogin">登录并进入 /drive</button>
             </div>
 
             <div v-else class="mt-8 space-y-4">
               <div>
                 <h2 class="text-3xl font-bold text-slate-900">创建学生账号</h2>
+                <p class="mt-2 text-sm leading-7 text-slate-500">注册仅面向已录入白名单的手机号。最终账号会自动生成为“昵称_真实姓名”。</p>
               </div>
-              <input v-model="registerForm.username" class="w-full rounded-3xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none" placeholder="设置你的学号或账号">
-              <input v-model="registerForm.password" type="password" class="w-full rounded-3xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none" placeholder="设置登录密码">
-              <input v-model="registerForm.phone" class="w-full rounded-3xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none" placeholder="请输入邀请码（手机号）">
+              <input v-model="registerForm.username" class="w-full rounded-3xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none" placeholder="设置你的昵称，例如：飞天小女警" @input="clearFeedback(registerFeedback)">
+              <input v-model="registerForm.password" type="password" class="w-full rounded-3xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none" placeholder="设置登录密码" @input="clearFeedback(registerFeedback)">
+              <input v-model="registerForm.phone" class="w-full rounded-3xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none" placeholder="请输入已录入白名单的手机号" @input="clearFeedback(registerFeedback)">
+              <div v-if="registerFeedback.message" class="rounded-[24px] px-4 py-3 text-sm leading-7"
+                :class="registerFeedback.type === 'error' ? 'border border-rose-200 bg-rose-50 text-rose-700' : (registerFeedback.type === 'success' ? 'border border-emerald-200 bg-emerald-50 text-emerald-700' : 'border border-amber-200 bg-amber-50 text-amber-700')">
+                {{ registerFeedback.message }}
+              </div>
               <button class="w-full rounded-3xl bg-emerald-600 px-4 py-3 text-sm font-semibold text-white shadow-lg shadow-emerald-200" @click="submitRegister">注册账号</button>
             </div>
           </div>

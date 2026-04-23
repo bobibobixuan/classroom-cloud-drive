@@ -1,4 +1,4 @@
-import { ref, watch } from '../deps.js';
+import { computed, ref, watch } from '../deps.js';
 import { actions, state } from '../store.js';
 import {
   closeDeleteAccount,
@@ -9,18 +9,20 @@ import {
   uiState,
   showToast,
 } from '../ui.js';
+import { splitAccountDisplay } from '../utils.js';
 
 export default {
   name: 'AccountDialogs',
   setup() {
-    const nextUsername = ref(state.user || '');
+    const accountDisplay = computed(() => splitAccountDisplay(state.user, state.realName));
+    const nextUsername = ref(accountDisplay.value.primary || state.user || '');
     const deletePassword = ref('');
 
     watch(
       () => uiState.renameOpen,
       (open) => {
         if (open) {
-          nextUsername.value = state.user || '';
+          nextUsername.value = accountDisplay.value.primary || state.user || '';
         }
       },
     );
@@ -65,6 +67,7 @@ export default {
 
     return {
       uiState,
+      accountDisplay,
       nextUsername,
       deletePassword,
       closeRename,
@@ -82,7 +85,10 @@ export default {
         <div class="w-full max-w-md rounded-[28px] border border-slate-200 bg-white p-6 shadow-2xl">
           <h3 class="text-xl font-semibold text-slate-900">修改用户名</h3>
           <p class="mt-3 text-sm leading-7 text-slate-500">修改后，你的云盘归属、聊天昵称、仓库归属和协作身份都会一起更新。</p>
-          <input v-model="nextUsername" class="mt-4 w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none" placeholder="请输入新的用户名">
+          <div v-if="accountDisplay.secondary" class="mt-3 rounded-2xl bg-slate-50 px-4 py-3 text-sm text-slate-500">
+            当前实名后缀会保留：<span class="font-medium text-slate-700">{{ accountDisplay.secondary }}</span>。这里只需要修改昵称部分。
+          </div>
+          <input v-model="nextUsername" class="mt-4 w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none" :placeholder="accountDisplay.secondary ? '请输入新的昵称' : '请输入新的用户名'">
           <div class="mt-6 flex justify-end gap-3">
             <button class="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-2 text-sm font-semibold" @click="closeRename()">取消</button>
             <button class="rounded-2xl bg-sky-600 px-4 py-2 text-sm font-semibold text-white" @click="submitRename">确认修改</button>

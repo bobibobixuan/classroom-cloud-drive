@@ -68,6 +68,8 @@ SUPER_ADMIN_USERNAME = "bobibobixuan"
 ROLE_USER = "user"
 ROLE_ADMIN = "admin"
 ROLE_SUPER_ADMIN = "super_admin"
+WHITELIST_STATUS_PENDING = "pending"
+WHITELIST_STATUS_REGISTERED = "registered"
 ADMIN_SCOPE_USER_LIFECYCLE = "user_lifecycle"
 ADMIN_SCOPE_QUOTA = "quota_management"
 ADMIN_SCOPE_ROLE = "role_management"
@@ -126,6 +128,118 @@ def format_bytes(size: int):
     if size >= 1024:
         return f"{size / 1024:.1f} KB"
     return f"{size} B"
+
+
+def normalize_name_part(value: str, field_label: str):
+    cleaned = re.sub(r"\s+", " ", (value or "").strip())
+    if len(cleaned) < 1:
+        raise HTTPException(status_code=400, detail=f"{field_label}不能为空")
+    if len(cleaned) > 40:
+        raise HTTPException(status_code=400, detail=f"{field_label}不能超过 40 个字符")
+    if any(character in cleaned for character in '<>:"/\\|?*'):
+        raise HTTPException(status_code=400, detail=f"{field_label}包含非法字符")
+    return cleaned
+
+
+def build_registered_username(nickname: str, real_name: str):
+    normalized_nickname = normalize_name_part(nickname, "昵称")
+    normalized_real_name = normalize_name_part(real_name, "真实姓名")
+    final_username = f"{normalized_nickname}_{normalized_real_name}"
+    if len(final_username) > 80:
+        raise HTTPException(status_code=400, detail="昵称和真实姓名组合后过长，请缩短昵称")
+    return final_username
+
+
+def parse_whitelist_import_lines(raw_text: str):
+    rows = []
+    seen_phones = set()
+    for line_number, raw_line in enumerate((raw_text or "").replace("\ufeff", "").splitlines(), start=1):
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        parts = [part.strip() for part in re.split(r"[,，\t]", line) if part.strip()]
+        if len(parts) < 2:
+            parts = line.split(None, 1)
+        if len(parts) < 2:
+            raise HTTPException(status_code=400, detail=f"第 {line_number} 行格式错误，应为 手机号,真实姓名")
+        first_value = parts[0].strip()
+        second_value = parts[1].strip()
+        header_values = {first_value.lower(), second_value.lower()}
+        if header_values & {"phone", "手机号"} and header_values & {"真实姓名", "姓名", "name"}:
+            continue
+        if re.match(r"^1[3-9]\d{9}$", first_value):
+            phone = first_value
+            real_name = second_value
+        elif re.match(r"^1[3-9]\d{9}$", second_value):
+            phone = second_value
+            real_name = first_value
+        else:
+            raise HTTPException(status_code=400, detail=f"第 {line_number} 行手机号不合法")
+        if not re.match(r"^1[3-9]\d{9}$", phone):
+            raise HTTPException(status_code=400, detail=f"第 {line_number} 行手机号不合法")
+        normalized_real_name = normalize_name_part(real_name, f"第 {line_number} 行真实姓名")
+        if phone in seen_phones:
+            continue
+        seen_phones.add(phone)
+        rows.append({"phone": phone, "real_name": normalized_real_name})
+    if not rows:
+        raise HTTPException(status_code=400, detail="名单内容为空，至少需要一条手机号和真实姓名")
+    return rows
+
+
+def get_registered_real_name(cursor, username: str):
+    cursor.execute(
+        "SELECT real_name FROM registration_whitelist WHERE registered_username=? AND status=?",
+        (username, WHITELIST_STATUS_REGISTERED),
+    )
+    row = cursor.fetchone()
+    if not row:
+        return ""
+    return row["real_name"] or ""
+
+
+def build_registration_whitelist_payload(row):
+    return {
+        "phone": row["phone"],
+        "real_name": row["real_name"] or "",
+        "status": row["status"] or WHITELIST_STATUS_PENDING,
+        "registered_username": row["registered_username"] or "",
+        "imported_at": row["imported_at"] or "",
+        "imported_by": row["imported_by"] or "",
+        "registered_at": row["registered_at"] or "",
+    }
+
+
+def resolve_registered_real_name(username: str = "", phone: str = "", cursor=None):
+    if not username and not phone:
+        return ""
+    if cursor is None:
+        conn = get_db()
+        active_cursor = conn.cursor()
+    else:
+        conn = None
+        active_cursor = cursor
+    try:
+        if phone:
+            active_cursor.execute(
+                "SELECT real_name FROM registration_whitelist WHERE phone=? ORDER BY CASE COALESCE(status, '') WHEN ? THEN 0 ELSE 1 END LIMIT 1",
+                (phone, WHITELIST_STATUS_REGISTERED),
+            )
+            row = active_cursor.fetchone()
+            if row and row["real_name"]:
+                return row["real_name"]
+        if username:
+            active_cursor.execute(
+                "SELECT real_name FROM registration_whitelist WHERE registered_username=? ORDER BY CASE COALESCE(status, '') WHEN ? THEN 0 ELSE 1 END LIMIT 1",
+                (username, WHITELIST_STATUS_REGISTERED),
+            )
+            row = active_cursor.fetchone()
+            if row and row["real_name"]:
+                return row["real_name"]
+        return ""
+    finally:
+        if conn:
+            conn.close()
 
 
 def normalize_admin_scopes(scopes):
@@ -320,9 +434,31 @@ def build_attachment_response(file_path: str, download_name: str):
 def read_chat_messages(limit: int = 50):
     conn = get_db()
     c = conn.cursor()
-    c.execute("SELECT username, content, share_code, image_data, time FROM messages ORDER BY id DESC LIMIT ?", (limit,))
+    c.execute(
+        """
+        SELECT
+            messages.username,
+            messages.content,
+            messages.share_code,
+            messages.image_data,
+            messages.time,
+            COALESCE(registration_whitelist.real_name, '') AS real_name
+        FROM messages
+        LEFT JOIN registration_whitelist ON registration_whitelist.registered_username = messages.username
+        ORDER BY messages.id DESC
+        LIMIT ?
+        """,
+        (limit,),
+    )
     rows = [
-        {"user": row[0], "text": row[1], "code": row[2], "image": row[3], "time": row[4]}
+        {
+            "user": row["username"],
+            "real_name": row["real_name"] or "",
+            "text": row["content"],
+            "code": row["share_code"],
+            "image": row["image_data"],
+            "time": row["time"],
+        }
         for row in c.fetchall()
     ]
     conn.close()
@@ -474,6 +610,36 @@ def migrate_inline_chat_images(cursor):
         updates.append((image_url, row["id"]))
     if updates:
         cursor.executemany("UPDATE messages SET image_data=? WHERE id=?", updates)
+
+
+def reconcile_registration_whitelist(cursor):
+    cursor.execute(
+        """
+        SELECT registration_whitelist.phone, users.username
+        FROM registration_whitelist
+        JOIN users ON users.phone = registration_whitelist.phone
+        """
+    )
+    updates = []
+    for row in cursor.fetchall():
+        updates.append(
+            (
+                WHITELIST_STATUS_REGISTERED,
+                row["username"],
+                row["phone"],
+            )
+        )
+    if updates:
+        cursor.executemany(
+            """
+            UPDATE registration_whitelist
+            SET status=?,
+                registered_username=?,
+                registered_at=COALESCE(registered_at, imported_at, ?)
+            WHERE phone=?
+            """,
+            [(status, username, now_text(), phone) for status, username, phone in updates],
+        )
 
 
 def validate_filename(filename: str):
@@ -835,13 +1001,15 @@ def update_user_storage_delta(cursor, username: str, delta: int):
     )
 
 
-def build_user_context(row):
+def build_user_context(row, cursor=None):
     role = (row["role"] or "").strip() or (ROLE_ADMIN if row["is_admin"] else ROLE_USER)
     admin_scopes = sorted(normalize_admin_scopes(row["admin_scopes"] or ""))
     is_admin = bool(row["is_admin"] or role in {ROLE_ADMIN, ROLE_SUPER_ADMIN})
     is_super_admin = role == ROLE_SUPER_ADMIN
+    real_name = resolve_registered_real_name(row["username"], row["phone"] if "phone" in row.keys() else "", cursor)
     return {
         "username": row["username"],
+        "real_name": real_name,
         "is_admin": is_admin,
         "role": role,
         "is_super_admin": is_super_admin,
@@ -861,6 +1029,7 @@ def get_user_context(token: str):
         """
         SELECT
             sessions.username,
+            COALESCE(users.phone, '') AS phone,
             COALESCE(users.is_admin, 0) AS is_admin,
             COALESCE(users.role, '') AS role,
             COALESCE(users.admin_scopes, '') AS admin_scopes,
@@ -876,12 +1045,15 @@ def get_user_context(token: str):
     if row and row["is_disabled"]:
         c.execute("DELETE FROM sessions WHERE token=?", (cleaned_token,))
         conn.commit()
-    conn.close()
     if not row:
+        conn.close()
         raise HTTPException(status_code=401, detail="过期")
     if row["is_disabled"]:
+        conn.close()
         raise HTTPException(status_code=403, detail="账号已被冻结，请联系超级管理员")
-    return build_user_context(row)
+    payload = build_user_context(row, c)
+    conn.close()
+    return payload
 
 
 def get_optional_user_context(token: Optional[str]):
@@ -1074,6 +1246,19 @@ def init_db():
         )
         """
     )
+    c.execute(
+        """
+        CREATE TABLE IF NOT EXISTS registration_whitelist (
+            phone TEXT PRIMARY KEY,
+            real_name TEXT,
+            status TEXT DEFAULT 'pending',
+            registered_username TEXT,
+            imported_at TEXT,
+            imported_by TEXT,
+            registered_at TEXT
+        )
+        """
+    )
     conn.commit()
 
     ensure_column(c, "users", "is_admin", "is_admin INTEGER DEFAULT 0")
@@ -1110,6 +1295,17 @@ def init_db():
     ensure_unique_index(c, "repo_join_requests", "idx_repo_join_requests_repo_username", ["repo_id", "username"])
     ensure_unique_index(c, "repo_files", "idx_repo_files_repo_path", ["repo_id", "relative_path"])
     ensure_unique_index(c, "notifications", "idx_notifications_username_created_at_id", ["username", "created_at", "id"])
+    ensure_column(c, "registration_whitelist", "real_name", "real_name TEXT")
+    ensure_column(c, "registration_whitelist", "status", "status TEXT DEFAULT 'pending'")
+    ensure_column(c, "registration_whitelist", "registered_username", "registered_username TEXT")
+    ensure_column(c, "registration_whitelist", "imported_at", "imported_at TEXT")
+    ensure_column(c, "registration_whitelist", "imported_by", "imported_by TEXT")
+    ensure_column(c, "registration_whitelist", "registered_at", "registered_at TEXT")
+    c.execute(
+        "UPDATE registration_whitelist SET status=? WHERE COALESCE(status, '')=''",
+        (WHITELIST_STATUS_PENDING,),
+    )
+    reconcile_registration_whitelist(c)
     c.execute("UPDATE file_records SET share_scope='private' WHERE share_scope='classroom'")
     c.execute("UPDATE shares SET access_level='private' WHERE access_level='classroom'")
     c.execute("UPDATE users SET quota_bytes=? WHERE quota_bytes IS NULL OR quota_bytes<=0", (USER_QUOTA,))
@@ -2230,6 +2426,7 @@ def login(request: Request, username: str = Form(...), password: str = Form(...)
         SELECT
             username,
             password,
+            COALESCE(phone, '') AS phone,
             COALESCE(is_admin, 0) AS is_admin,
             COALESCE(role, '') AS role,
             COALESCE(admin_scopes, '') AS admin_scopes,
@@ -2255,8 +2452,8 @@ def login(request: Request, username: str = Form(...), password: str = Form(...)
         c.execute("DELETE FROM sessions WHERE username=?", (username,))
         c.execute("INSERT INTO sessions VALUES (?, ?)", (token, username))
         conn.commit()
+        payload = build_user_context(row, c)
         conn.close()
-        payload = build_user_context(row)
         log_audit_event("auth.login", request, payload, "user", username, "登录成功")
         return {"token": token, **payload}
 
@@ -2264,25 +2461,162 @@ def login(request: Request, username: str = Form(...), password: str = Form(...)
 @app.post("/api/register")
 def register(username: str = Form(...), password: str = Form(...), phone: str = Form(...)):
     if not re.match(r"^1[3-9]\d{9}$", phone):
-        raise HTTPException(status_code=400, detail="邀请码错误")
+        raise HTTPException(status_code=400, detail="手机号格式错误")
     conn = get_db()
     c = conn.cursor()
+    c.execute(
+        "SELECT phone, real_name, status FROM registration_whitelist WHERE phone=?",
+        (phone.strip(),),
+    )
+    whitelist_row = c.fetchone()
+    if not whitelist_row:
+        conn.close()
+        raise HTTPException(status_code=403, detail="该手机号未被录入注册白名单")
+    if (whitelist_row["status"] or WHITELIST_STATUS_PENDING) == WHITELIST_STATUS_REGISTERED:
+        conn.close()
+        raise HTTPException(status_code=400, detail="该手机号名额已完成注册，不能重复使用")
+
+    final_username = build_registered_username(username, whitelist_row["real_name"] or "")
+    c.execute("SELECT 1 FROM users WHERE username=?", (final_username,))
+    if c.fetchone():
+        conn.close()
+        raise HTTPException(status_code=400, detail="该昵称已与实名组合成重复账号，请更换昵称后重试")
+
     c.execute("SELECT COUNT(*) FROM users WHERE COALESCE(is_admin, 0)=1 OR role IN (?, ?)", (ROLE_ADMIN, ROLE_SUPER_ADMIN))
     has_admin = c.fetchone()[0] > 0
-    role = ROLE_SUPER_ADMIN if username == SUPER_ADMIN_USERNAME else (ROLE_ADMIN if not has_admin else ROLE_USER)
+    role = ROLE_ADMIN if not has_admin else ROLE_USER
     is_admin = 1 if role in {ROLE_ADMIN, ROLE_SUPER_ADMIN} else 0
     admin_scopes = serialize_admin_scopes(ADMIN_SCOPE_OPTIONS if role == ROLE_SUPER_ADMIN else DEFAULT_ADMIN_SCOPES)
     try:
         c.execute(
             "INSERT INTO users (username, password, phone, is_admin, role, admin_scopes, quota_bytes) VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (username, hash_password(password), phone, is_admin, role, admin_scopes if is_admin else "", USER_QUOTA),
+            (final_username, hash_password(password), phone.strip(), is_admin, role, admin_scopes if is_admin else "", USER_QUOTA),
+        )
+        c.execute(
+            "UPDATE registration_whitelist SET status=?, registered_username=?, registered_at=? WHERE phone=?",
+            (WHITELIST_STATUS_REGISTERED, final_username, now_text(), phone.strip()),
         )
         conn.commit()
     except sqlite3.IntegrityError:
         raise HTTPException(status_code=400, detail="用户名或手机号已存在")
     finally:
         conn.close()
-    return {"msg": "ok", "is_admin": bool(is_admin), "role": role, "is_super_admin": role == ROLE_SUPER_ADMIN}
+    return {
+        "msg": "ok",
+        "username": final_username,
+        "real_name": whitelist_row["real_name"] or "",
+        "is_admin": bool(is_admin),
+        "role": role,
+        "is_super_admin": role == ROLE_SUPER_ADMIN,
+    }
+
+
+@app.get("/api/admin/registration-whitelist")
+def list_registration_whitelist(authorization: str = Header(None)):
+    require_admin(authorization, ADMIN_SCOPE_USER_LIFECYCLE)
+    conn = get_db()
+    c = conn.cursor()
+    c.execute(
+        """
+        SELECT phone, real_name, status, registered_username, imported_at, imported_by, registered_at
+        FROM registration_whitelist
+        ORDER BY
+            CASE COALESCE(status, '') WHEN ? THEN 0 ELSE 1 END,
+            imported_at DESC,
+            phone ASC
+        """,
+        (WHITELIST_STATUS_PENDING,),
+    )
+    items = [build_registration_whitelist_payload(row) for row in c.fetchall()]
+    conn.close()
+    return {"items": items}
+
+
+@app.post("/api/admin/registration-whitelist/import")
+def import_registration_whitelist(
+    request: Request,
+    file: UploadFile = File(...),
+    authorization: str = Header(None),
+):
+    current_admin = require_admin(authorization, ADMIN_SCOPE_USER_LIFECYCLE)
+    filename = (file.filename or "名单.txt").strip()
+    _, ext = os.path.splitext(filename)
+    if ext.lower() not in {".txt", ".csv"}:
+        raise HTTPException(status_code=400, detail="名单文件只支持 .txt 或 .csv")
+    try:
+        content = file.file.read().decode("utf-8-sig")
+    except UnicodeDecodeError as exc:
+        raise HTTPException(status_code=400, detail="名单文件需为 UTF-8 编码") from exc
+    rows = parse_whitelist_import_lines(content)
+    conn = get_db()
+    c = conn.cursor()
+    imported_at = now_text()
+    inserted = 0
+    updated = 0
+    for row in rows:
+        c.execute(
+            "SELECT username FROM users WHERE phone=?",
+            (row["phone"],),
+        )
+        matched_user = c.fetchone()
+        next_status = WHITELIST_STATUS_REGISTERED if matched_user else WHITELIST_STATUS_PENDING
+        matched_username = matched_user["username"] if matched_user else None
+        matched_registered_at = imported_at if matched_user else None
+        c.execute(
+            "SELECT status FROM registration_whitelist WHERE phone=?",
+            (row["phone"],),
+        )
+        existing = c.fetchone()
+        c.execute(
+            """
+            INSERT INTO registration_whitelist (phone, real_name, status, registered_username, imported_at, imported_by, registered_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(phone) DO UPDATE SET
+                real_name=excluded.real_name,
+                imported_at=excluded.imported_at,
+                imported_by=excluded.imported_by,
+                status=CASE
+                    WHEN excluded.status=? THEN excluded.status
+                    WHEN registration_whitelist.status=? THEN registration_whitelist.status
+                    ELSE excluded.status
+                END,
+                registered_username=CASE
+                    WHEN excluded.registered_username IS NOT NULL AND excluded.registered_username != '' THEN excluded.registered_username
+                    ELSE registration_whitelist.registered_username
+                END,
+                registered_at=CASE
+                    WHEN excluded.registered_username IS NOT NULL AND excluded.registered_username != '' THEN COALESCE(registration_whitelist.registered_at, excluded.registered_at)
+                    ELSE registration_whitelist.registered_at
+                END
+            """,
+            (
+                row["phone"],
+                row["real_name"],
+                next_status,
+                matched_username,
+                imported_at,
+                current_admin["username"],
+                matched_registered_at,
+                WHITELIST_STATUS_REGISTERED,
+                WHITELIST_STATUS_REGISTERED,
+            ),
+        )
+        if existing:
+            updated += 1
+        else:
+            inserted += 1
+    reconcile_registration_whitelist(c)
+    conn.commit()
+    conn.close()
+    log_audit_event(
+        "admin.registration_whitelist.import",
+        request,
+        current_admin,
+        "registration_whitelist",
+        filename,
+        f"inserted={inserted}; updated={updated}",
+    )
+    return {"msg": "白名单导入完成", "inserted": inserted, "updated": updated, "total": len(rows)}
 
 
 @app.post("/api/admin/users")
@@ -2359,10 +2693,11 @@ def list_users(authorization: str = Header(None)):
     for row in c.fetchall():
         c.execute("SELECT COUNT(*) FROM repositories WHERE owner_username=?", (row["username"],))
         repo_count = c.fetchone()[0]
-        user_payload = build_user_context(row)
+        user_payload = build_user_context(row, c)
         users.append(
             {
                 "username": row["username"],
+            "real_name": user_payload["real_name"],
                 "phone": row["phone"],
                 "is_admin": user_payload["is_admin"],
                 "role": user_payload["role"],
@@ -2651,28 +2986,35 @@ def delete_user_as_admin(username: str, request: Request, transfer_to: str = "",
 def rename_account(new_username: str = Form(...), authorization: str = Header(None)):
     user = get_user_context(authorization)
     username = user["username"]
-    if not new_username or len(new_username) < 2:
-        raise HTTPException(status_code=400, detail="用户名长度不能少于2个字符")
 
     conn = get_db()
     c = conn.cursor()
-    c.execute("SELECT 1 FROM users WHERE username=?", (new_username,))
+    real_name = get_registered_real_name(c, username)
+    normalized_target_username = build_registered_username(new_username, real_name) if real_name else normalize_name_part(new_username, "用户名")
+    if normalized_target_username == username:
+        conn.close()
+        raise HTTPException(status_code=400, detail="新用户名不能与当前用户名相同")
+    c.execute("SELECT 1 FROM users WHERE username=?", (normalized_target_username,))
     if c.fetchone():
         conn.close()
         raise HTTPException(status_code=400, detail="用户名已被占用")
 
     try:
-        c.execute("UPDATE users SET username=? WHERE username=?", (new_username, username))
-        c.execute("UPDATE sessions SET username=? WHERE username=?", (new_username, username))
-        c.execute("UPDATE messages SET username=? WHERE username=?", (new_username, username))
-        c.execute("UPDATE shares SET username=? WHERE username=?", (new_username, username))
-        c.execute("UPDATE file_records SET username=? WHERE username=?", (new_username, username))
-        c.execute("UPDATE repositories SET owner_username=? WHERE owner_username=?", (new_username, username))
-        c.execute("UPDATE repo_members SET username=? WHERE username=?", (new_username, username))
-        c.execute("UPDATE repo_files SET updated_by=? WHERE updated_by=?", (new_username, username))
+        c.execute("UPDATE users SET username=? WHERE username=?", (normalized_target_username, username))
+        c.execute("UPDATE sessions SET username=? WHERE username=?", (normalized_target_username, username))
+        c.execute("UPDATE messages SET username=? WHERE username=?", (normalized_target_username, username))
+        c.execute("UPDATE shares SET username=? WHERE username=?", (normalized_target_username, username))
+        c.execute("UPDATE file_records SET username=? WHERE username=?", (normalized_target_username, username))
+        c.execute("UPDATE repositories SET owner_username=? WHERE owner_username=?", (normalized_target_username, username))
+        c.execute("UPDATE repo_members SET username=? WHERE username=?", (normalized_target_username, username))
+        c.execute("UPDATE repo_files SET updated_by=? WHERE updated_by=?", (normalized_target_username, username))
+        c.execute(
+            "UPDATE registration_whitelist SET registered_username=? WHERE registered_username=?",
+            (normalized_target_username, username),
+        )
 
         old_dir = get_user_dir(username)
-        new_dir = get_user_dir(new_username)
+        new_dir = get_user_dir(normalized_target_username)
         if os.path.exists(old_dir):
             os.rename(old_dir, new_dir)
         conn.commit()
@@ -2682,7 +3024,7 @@ def rename_account(new_username: str = Form(...), authorization: str = Header(No
     finally:
         conn.close()
 
-    return {"msg": "修改成功", "new_username": new_username}
+    return {"msg": "修改成功", "new_username": normalized_target_username}
 
 
 @app.post("/api/delete-account")

@@ -23,7 +23,7 @@ The runtime is split into two layers:
 
 ### Current Capabilities
 
-- Authentication with register/login/logout.
+- Authentication with whitelist-backed register/login/logout.
 - Personal drive with upload, download, delete, batch visibility changes, and batch share-to-chat.
 - Classroom chat with text, images, and share codes.
 - Public repo hall and private collaborative repositories.
@@ -31,6 +31,7 @@ The runtime is split into two layers:
 - Admin management for users, quotas, passwords, account status, asset transfer, share governance, recycle bin cleanup, and audit logs.
 - Notification center with unread badges and approval reminders.
 - Split admin frontend navigation: admin settings and audit logs are now separate pages.
+- Account display can render nickname plus muted real-name text when whitelist data is available.
 
 ### Admin Console Layout
 
@@ -126,6 +127,8 @@ go run .
 - Notification popup is now rendered as a fixed top-level layer to avoid clipping.
 - Super admin identity handling and admin scope propagation were fixed.
 - Admin role assignment now falls back to default delegated scopes when an admin is created or promoted without explicit scope selection.
+- Registration is now whitelist-based, binds imported phone numbers to real names, and generates nickname_realname accounts.
+- Imported whitelist data now reconciles with historical user phone numbers, so old accounts can display real names without re-registering.
 - Admin console was reorganized into subpages:
   - /admin/users
   - /admin/repos
@@ -133,6 +136,9 @@ go run .
   - /admin/recycle
   - /admin/logs
 - Audit logs are exposed as a separate admin menu item below admin settings.
+- The admin user area now contains a dedicated whitelist subpanel for importing and reviewing registration slots.
+- Login/register pages now show persistent inline feedback for field validation, wrong passwords, frozen accounts, and post-registration guidance.
+- The chat drawer now keeps the composer visible on open, stays pinned to the latest messages more reliably, and shows muted real names next to nicknames.
 
 ### Troubleshooting
 
@@ -178,7 +184,7 @@ Before pushing, make sure git status only shows intended source changes.
 
 ### 当前能力
 
-- 用户注册、登录、退出。
+- 基于白名单的用户注册、登录、退出。
 - 个人云盘上传、下载、删除、批量公开设置、批量分享到聊天栏。
 - 课堂聊天支持文本、图片、分享码。
 - 仓库大厅和私有协作仓库。
@@ -186,6 +192,7 @@ Before pushing, make sure git status only shows intended source changes.
 - 管理后台支持用户、配额、密码、冻结、资产转移、分享治理、回收站清理和审计日志。
 - 通知中心支持未读红点和审批提醒。
 - 管理后台前端已拆成独立配置页和独立日志页。
+- 当白名单实名可用时，前端账号显示支持“昵称 + 浅色实名”。
 
 ### 管理后台布局
 
@@ -281,6 +288,8 @@ go run .
 - 通知气泡调整为顶层 fixed 浮层，避免被裁切。
 - 超级管理员身份同步和管理员 scope 继承逻辑已修复。
 - 当创建或提升子管理员时，如果没有显式勾选权限范围，后端会自动补齐默认下放权限。
+- 注册已改为白名单制：手机号导入后绑定真实姓名，注册成功后会消费名额，并生成 昵称_真实姓名 账号。
+- 白名单导入会自动回填历史用户手机号，旧账号不需要重新注册也能补上实名展示。
 - 管理后台拆分为独立子页面：
   - /admin/users
   - /admin/repos
@@ -288,6 +297,9 @@ go run .
   - /admin/recycle
   - /admin/logs
 - 审计日志已从管理员配置中拆出，作为单独菜单展示。
+- 管理员用户页内部新增“注册白名单”子块，用来导入名单和查看待注册/已注册流转。
+- 登录与注册页面增加了表单内提示，能直接显示密码错误、字段缺失、账号冻结和注册后登录指引。
+- 聊天抽屉已优化为更稳定的底部输入区布局，并支持显示发言人的浅色实名与快速回到底部。
 
 ### 常见排查
 

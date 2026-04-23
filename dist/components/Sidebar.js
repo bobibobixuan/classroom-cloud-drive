@@ -1,6 +1,7 @@
 import { computed, RouterLink, useRoute } from '../deps.js';
 import { actions, state } from '../store.js';
 import { toggleChat, openRename, openSecurity } from '../ui.js';
+import { splitAccountDisplay } from '../utils.js';
 
 export default {
   name: 'Sidebar',
@@ -25,10 +26,12 @@ export default {
 
     const currentPath = computed(() => route.path);
     const isItemActive = (item) => currentPath.value === item.to;
+    const accountDisplay = computed(() => splitAccountDisplay(state.user, state.realName));
 
     return {
       actions,
       state,
+      accountDisplay,
       navItems,
       currentPath,
       isItemActive,
@@ -60,7 +63,10 @@ export default {
 
       <div class="mt-6 rounded-[28px] border border-slate-200 bg-slate-50 px-3 py-4 text-slate-700 xl:px-4">
         <div class="hidden xl:block">
-          <div class="text-sm font-semibold text-slate-900">{{ state.user || '未登录' }}</div>
+          <div class="flex flex-wrap items-baseline gap-2 text-sm font-semibold text-slate-900">
+            <span>{{ accountDisplay.primary || '未登录' }}</span>
+            <span v-if="accountDisplay.secondary" class="text-xs font-medium text-slate-400">{{ accountDisplay.secondary }}</span>
+          </div>
           <div class="mt-1 text-xs text-slate-500">{{ state.isAdmin ? '管理员权限已激活' : '普通用户' }}</div>
         </div>
         <div class="mt-3 flex flex-col gap-2">
