@@ -1,6 +1,3 @@
-这是一份为您整理的完整的、包含您原文件中所有细节（包括常见排查、近期修复、Git建议等）的双语 `README.md` 源码。您可以直接点击代码块右上角的“复制”按钮，覆盖您原本的文件。
-
-````markdown
 # ☁️ Classroom Cloud Drive / 课堂云盘
 
 [![Go Version](https://img.shields.io/badge/Go-1.18+-00ADD8?style=flat&logo=go)](https://go.dev/)
