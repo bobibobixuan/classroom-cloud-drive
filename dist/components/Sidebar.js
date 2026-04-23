@@ -7,6 +7,7 @@ export default {
   components: { RouterLink },
   setup() {
     const route = useRoute();
+    const hasAdminScope = (scope) => state.isSuperAdmin || (state.adminScopes || []).includes(scope);
     const navItems = computed(() => {
       const items = [
         { to: '/drive', label: '个人云盘', icon: '盘' },
@@ -14,18 +15,23 @@ export default {
         { to: '/repos/hall', label: '仓库大厅', icon: '厅' },
       ];
       if (state.isAdmin) {
-        items.push({ to: '/admin', label: '管理员', icon: '管' });
+        items.push({ to: '/admin/users', label: '管理员配置', icon: '管' });
+        if (hasAdminScope('audit_logs')) {
+          items.push({ to: '/admin/logs', label: '操作日志', icon: '志' });
+        }
       }
       return items;
     });
 
     const currentPath = computed(() => route.path);
+    const isItemActive = (item) => currentPath.value === item.to;
 
     return {
       actions,
       state,
       navItems,
       currentPath,
+      isItemActive,
       toggleChat,
       openRename,
       openSecurity,
@@ -43,7 +49,7 @@ export default {
           :key="item.to"
           :to="item.to"
           class="flex items-center gap-3 rounded-2xl px-3 py-3 text-sm font-semibold transition"
-          :class="currentPath === item.to ? 'bg-sky-600 text-white shadow-lg shadow-sky-200' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'"
+          :class="isItemActive(item) ? 'bg-sky-600 text-white shadow-lg shadow-sky-200' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'"
         >
           <span class="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border border-current/15 bg-current/10 text-sm font-bold">
             {{ item.icon }}

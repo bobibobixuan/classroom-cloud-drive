@@ -23,7 +23,12 @@ const routes = [
       { path: '/repos/mine', component: RepoMineView, meta: { title: '我的仓库' } },
       { path: '/repos/hall', component: RepoHallView, meta: { title: '仓库大厅' } },
       { path: '/repos/:id', component: RepoDetailView, meta: { title: '仓库详情' } },
-      { path: '/admin', component: AdminView, meta: { title: '管理员控制台', admin: true } },
+      { path: '/admin', redirect: '/admin/users', meta: { admin: true } },
+      { path: '/admin/users', component: AdminView, meta: { title: '管理员配置', admin: true, adminSection: 'users' } },
+      { path: '/admin/repos', component: AdminView, meta: { title: '仓库设置', admin: true, adminSection: 'repos' } },
+      { path: '/admin/shares', component: AdminView, meta: { title: '公开链接设置', admin: true, adminSection: 'shares' } },
+      { path: '/admin/recycle', component: AdminView, meta: { title: '回收站清理', admin: true, adminSection: 'recycle' } },
+      { path: '/admin/logs', component: AdminView, meta: { title: '操作日志', admin: true, adminSection: 'logs' } },
     ],
   },
 ];

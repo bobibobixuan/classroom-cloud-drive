@@ -143,6 +143,15 @@ def serialize_admin_scopes(scopes):
     return ",".join(sorted(normalize_admin_scopes(scopes)))
 
 
+def resolve_admin_scopes_for_role(role: str, scopes):
+    if role == ROLE_SUPER_ADMIN:
+        return serialize_admin_scopes(ADMIN_SCOPE_OPTIONS)
+    if role == ROLE_ADMIN:
+        normalized = normalize_admin_scopes(scopes)
+        return serialize_admin_scopes(normalized or DEFAULT_ADMIN_SCOPES)
+    return ""
+
+
 def request_client_ip(request: Optional[Request]):
     if not request:
         return "unknown"
@@ -2298,7 +2307,7 @@ def create_user_as_admin(
     if quota_bytes <= 0:
         raise HTTPException(status_code=400, detail="配额必须大于 0")
 
-    normalized_scopes = serialize_admin_scopes(admin_scopes if role != ROLE_SUPER_ADMIN else ADMIN_SCOPE_OPTIONS)
+    normalized_scopes = resolve_admin_scopes_for_role(role, admin_scopes)
     conn = get_db()
     c = conn.cursor()
     try:
@@ -2310,7 +2319,7 @@ def create_user_as_admin(
                 phone.strip(),
                 1 if role in {ROLE_ADMIN, ROLE_SUPER_ADMIN} else 0,
                 role,
-                normalized_scopes if role in {ROLE_ADMIN, ROLE_SUPER_ADMIN} else "",
+                normalized_scopes,
                 quota_bytes,
             ),
         )
@@ -2507,7 +2516,7 @@ def update_user_role(
         raise HTTPException(status_code=400, detail="非法角色")
     if next_role == ROLE_SUPER_ADMIN and target_username != SUPER_ADMIN_USERNAME:
         raise HTTPException(status_code=400, detail="超级管理员账号名固定为 bobibobixuan")
-    next_scopes = serialize_admin_scopes(admin_scopes if next_role != ROLE_SUPER_ADMIN else ADMIN_SCOPE_OPTIONS)
+    next_scopes = resolve_admin_scopes_for_role(next_role, admin_scopes)
     conn = get_db()
     c = conn.cursor()
     c.execute("SELECT COALESCE(role, '') AS role FROM users WHERE username=?", (target_username,))
@@ -2523,7 +2532,7 @@ def update_user_role(
         (
             next_role,
             1 if next_role in {ROLE_ADMIN, ROLE_SUPER_ADMIN} else 0,
-            next_scopes if next_role in {ROLE_ADMIN, ROLE_SUPER_ADMIN} else "",
+            next_scopes,
             target_username,
         ),
     )

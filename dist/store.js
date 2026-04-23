@@ -543,6 +543,8 @@ export const actions = {
     formData.append('target_username', username);
     formData.append('is_admin', nextIsAdmin ? '1' : '0');
     await jsonWithAuth('/api/admin/grant', { method: 'POST', body: formData });
+    await this.refreshIdentity();
+    await this.loadNotifications();
     await this.loadAdminUsers();
   },
 
@@ -583,7 +585,17 @@ export const actions = {
     formData.append('role', role);
     adminScopes.forEach((scope) => formData.append('admin_scopes', scope));
     await jsonWithAuth(`/api/admin/users/${encodeURIComponent(username)}/role`, { method: 'POST', body: formData });
-    await this.loadAdminUsers();
+    await this.refreshIdentity();
+    await this.loadNotifications();
+    if (state.isAdmin) {
+      await this.loadAdminUsers();
+    } else {
+      state.adminUsers = [];
+      state.adminRepos = [];
+      state.adminShares = [];
+      state.recycleBinItems = [];
+      state.auditLogs = [];
+    }
   },
 
   async transferUserAssetsByAdmin(username, targetUsername) {

@@ -1,8 +1,7 @@
-import { onMounted, reactive } from '../deps.js';
+import { computed, onMounted, reactive, RouterLink, useRoute, useRouter, watch } from '../deps.js';
 import { actions, state } from '../store.js';
 import { confirmAction, showToast } from '../ui.js';
 import { formatSize } from '../utils.js';
-import { useRouter } from '../deps.js';
 
 const scopeOptions = [
   { value: 'user_lifecycle', label: '账号管理' },
@@ -13,36 +12,88 @@ const scopeOptions = [
   { value: 'audit_logs', label: '审计日志' },
 ];
 
+const defaultAdminScopes = ['user_lifecycle', 'quota_management', 'transfer_ownership', 'share_governance', 'audit_logs'];
+
+const configSections = [
+  {
+    key: 'users',
+    title: '用户设置',
+    description: '管理账号、角色、配额和资产转移。',
+    scope: 'user_lifecycle',
+    route: '/admin/users',
+  },
+  {
+    key: 'repos',
+    title: '仓库设置',
+    description: '查看仓库占用、成员和管理员入口。',
+    scope: 'audit_logs',
+    route: '/admin/repos',
+  },
+  {
+    key: 'shares',
+    title: '公开链接设置',
+    description: '统一维护公开分享、密码和过期时间。',
+    scope: 'share_governance',
+    route: '/admin/shares',
+  },
+  {
+    key: 'recycle',
+    title: '回收站清理',
+    description: '集中处理全局回收站和磁盘回收。',
+    scope: 'storage_cleanup',
+    route: '/admin/recycle',
+  },
+];
+
 export default {
   name: 'AdminView',
+  components: { RouterLink },
   setup() {
     const router = useRouter();
+    const route = useRoute();
     const createForm = reactive({
       username: '',
       password: '',
       phone: '',
       role: 'user',
       quotaMb: 500,
-      adminScopes: ['user_lifecycle', 'quota_management', 'share_governance', 'audit_logs'],
+      adminScopes: [...defaultAdminScopes],
     });
     const userDrafts = reactive({});
     const shareDrafts = reactive({});
 
     const hasScope = (scope) => state.isSuperAdmin || (state.adminScopes || []).includes(scope);
+    const activeSection = computed(() => route.meta.adminSection || 'users');
+    const isLogsPage = computed(() => activeSection.value === 'logs');
+    const availableConfigSections = computed(() => configSections.filter((section) => hasScope(section.scope)));
+    const pageIntro = computed(() => {
+      if (isLogsPage.value) {
+        return '这里单独展示管理员操作日志，避免与配置项混在同一页。';
+      }
+      return '当前管理员配置已拆分为独立分区，点击上方分类查看对应设置。';
+    });
+
+    const normalizeAdminScopes = (role, scopes) => {
+      if (role !== 'admin') return [];
+      return (scopes && scopes.length) ? [...scopes] : [...defaultAdminScopes];
+    };
+
+    const syncUserDraft = (user) => {
+      const roleValue = user.role || (user.is_super_admin ? 'super_admin' : (user.is_admin ? 'admin' : 'user'));
+      const currentDraft = userDrafts[user.username] || {};
+      userDrafts[user.username] = {
+        quotaMb: Math.max(1, Math.round((user.quota_bytes || 0) / 1024 / 1024)),
+        password: currentDraft.password || '',
+        transferTo: currentDraft.transferTo || '',
+        role: roleValue,
+        adminScopes: normalizeAdminScopes(roleValue, user.admin_scopes || []),
+      };
+      return userDrafts[user.username];
+    };
 
     const ensureUserDraft = (user) => {
       if (!userDrafts[user.username]) {
-        userDrafts[user.username] = {
-          quotaMb: Math.max(1, Math.round((user.quota_bytes || 0) / 1024 / 1024)),
-          password: '',
-          transferTo: '',
-          role: user.role || (user.is_super_admin ? 'super_admin' : (user.is_admin ? 'admin' : 'user')),
-          adminScopes: [...(user.admin_scopes || [])],
-        };
-      } else {
-        userDrafts[user.username].quotaMb = Math.max(1, Math.round((user.quota_bytes || 0) / 1024 / 1024));
-        userDrafts[user.username].role = user.role || userDrafts[user.username].role;
-        userDrafts[user.username].adminScopes = [...(user.admin_scopes || [])];
+        return syncUserDraft(user);
       }
       return userDrafts[user.username];
     };
@@ -60,28 +111,67 @@ export default {
     };
 
     const syncDrafts = () => {
-      (state.adminUsers || []).forEach((user) => ensureUserDraft(user));
+      (state.adminUsers || []).forEach((user) => syncUserDraft(user));
       (state.adminShares || []).forEach((share) => ensureShareDraft(share));
+    };
+
+    const getFallbackAdminRoute = () => {
+      if (availableConfigSections.value.length) {
+        return availableConfigSections.value[0].route;
+      }
+      if (hasScope('audit_logs')) {
+        return '/admin/logs';
+      }
+      return '/drive';
+    };
+
+    const ensureAccessibleRoute = async () => {
+      if (isLogsPage.value) {
+        if (!hasScope('audit_logs')) {
+          const fallback = getFallbackAdminRoute();
+          if (fallback !== route.path) {
+            await router.replace(fallback);
+          }
+          return false;
+        }
+        return true;
+      }
+      if (!availableConfigSections.value.some((section) => section.key === activeSection.value)) {
+        const fallback = getFallbackAdminRoute();
+        if (fallback !== route.path) {
+          await router.replace(fallback);
+        }
+        return false;
+      }
+      return true;
+    };
+
+    const loadSectionData = async () => {
+      const tasks = [];
+      if (activeSection.value === 'users' && hasScope('user_lifecycle')) tasks.push(actions.loadAdminUsers());
+      if (activeSection.value === 'repos' && hasScope('audit_logs')) tasks.push(actions.loadAdminRepos());
+      if (activeSection.value === 'shares' && hasScope('share_governance')) tasks.push(actions.loadAdminShares());
+      if (activeSection.value === 'recycle' && hasScope('storage_cleanup')) tasks.push(actions.loadRecycleBin());
+      if (activeSection.value === 'logs' && hasScope('audit_logs')) tasks.push(actions.loadAuditLogs(200));
+      await Promise.all(tasks);
+      syncDrafts();
     };
 
     const load = async () => {
       try {
-        const tasks = [];
-        if (hasScope('user_lifecycle')) tasks.push(actions.loadAdminUsers());
-        if (hasScope('audit_logs')) {
-          tasks.push(actions.loadAdminRepos());
-          tasks.push(actions.loadAuditLogs(200));
-        }
-        if (hasScope('share_governance')) tasks.push(actions.loadAdminShares());
-        if (hasScope('storage_cleanup')) tasks.push(actions.loadRecycleBin());
-        await Promise.all(tasks);
-        syncDrafts();
+        await actions.refreshIdentity();
+        const allowed = await ensureAccessibleRoute();
+        if (!allowed) return;
+        await loadSectionData();
       } catch (error) {
         showToast(error.message || '加载管理员控制台失败', 'error');
       }
     };
 
     onMounted(load);
+    watch(() => route.path, () => {
+      load();
+    });
 
     const resetChat = async () => {
       if (!(await confirmAction({ title: '清空聊天记录', message: '确定清空课堂聊天记录吗？此操作不可恢复。', confirmText: '确认清空' }))) {
@@ -114,7 +204,7 @@ export default {
         createForm.phone = '';
         createForm.role = 'user';
         createForm.quotaMb = 500;
-        createForm.adminScopes = ['user_lifecycle', 'quota_management', 'share_governance', 'audit_logs'];
+        createForm.adminScopes = [...defaultAdminScopes];
         showToast('新用户已创建', 'success');
         await load();
       } catch (error) {
@@ -176,7 +266,7 @@ export default {
         await actions.updateUserRoleByAdmin(
           user.username,
           draft.role,
-          draft.role === 'admin' ? draft.adminScopes : [],
+          normalizeAdminScopes(draft.role, draft.adminScopes),
         );
         showToast(`已更新 ${user.username} 的角色`, 'success');
         await load();
@@ -307,6 +397,10 @@ export default {
 
     return {
       state,
+      activeSection,
+      isLogsPage,
+      availableConfigSections,
+      pageIntro,
       scopeOptions,
       load,
       resetChat,
@@ -337,117 +431,135 @@ export default {
   },
   template: `
     <div class="space-y-6">
-      <section class="flex flex-wrap items-start justify-between gap-3 rounded-[32px] border border-slate-200 bg-slate-50 px-6 py-6">
-        <div>
-          <div class="text-sm font-medium uppercase tracking-[0.24em] text-slate-400">Admin</div>
-          <h2 class="mt-2 text-3xl font-bold text-slate-900">管理员控制台</h2>
-          <p class="mt-2 text-sm text-slate-500">当前身份：{{ state.isSuperAdmin ? '超级管理员' : '子管理员' }}</p>
-        </div>
-        <div class="flex gap-2">
-          <button class="rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold" @click="load">刷新</button>
-          <button v-if="hasScope('share_governance')" class="rounded-2xl bg-rose-600 px-4 py-2 text-sm font-semibold text-white" @click="resetChat">清空聊天</button>
-        </div>
-      </section>
-
-      <section v-if="hasScope('user_lifecycle')" class="rounded-[32px] border border-slate-200 bg-white px-6 py-6 shadow-sm">
-        <div class="flex items-center justify-between gap-4">
+      <section class="rounded-[32px] border border-slate-200 bg-slate-50 px-6 py-6">
+        <div class="flex flex-wrap items-start justify-between gap-4">
           <div>
-            <h3 class="text-xl font-semibold text-slate-900">创建新用户</h3>
-            <p class="mt-2 text-sm text-slate-500">超级管理员可以直接创建账号，并决定是否授予子管理员角色与初始配额。</p>
+            <div class="text-sm font-medium uppercase tracking-[0.24em] text-slate-400">Admin</div>
+            <h2 class="mt-2 text-3xl font-bold text-slate-900">{{ isLogsPage ? '操作日志中心' : '管理员配置' }}</h2>
+            <p class="mt-2 text-sm text-slate-500">{{ pageIntro }}</p>
+            <p class="mt-2 text-xs text-slate-400">当前身份：{{ state.isSuperAdmin ? '超级管理员' : '子管理员' }}</p>
+          </div>
+          <div class="flex gap-2">
+            <button class="rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold" @click="load">刷新</button>
+            <button v-if="!isLogsPage && hasScope('share_governance')" class="rounded-2xl bg-rose-600 px-4 py-2 text-sm font-semibold text-white" @click="resetChat">清空聊天</button>
           </div>
         </div>
-        <div class="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-5">
-          <input v-model="createForm.username" class="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none" placeholder="用户名">
-          <input v-model="createForm.password" type="password" class="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none" placeholder="初始密码">
-          <input v-model="createForm.phone" class="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none" placeholder="手机号">
-          <select v-model="createForm.role" class="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none">
-            <option value="user">普通用户</option>
-            <option value="admin" :disabled="!state.isSuperAdmin">子管理员</option>
-          </select>
-          <input v-model="createForm.quotaMb" type="number" min="1" class="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none" placeholder="配额（MB）">
-        </div>
-        <div v-if="createForm.role === 'admin'" class="mt-4 flex flex-wrap gap-3 rounded-[28px] bg-slate-50 px-4 py-4 text-sm text-slate-600">
-          <label v-for="scope in scopeOptions" :key="scope.value" class="inline-flex items-center gap-2">
-            <input type="checkbox" :checked="createForm.adminScopes.includes(scope.value)" @change="toggleCreateScope(scope.value, $event.target.checked)">
-            <span>{{ scope.label }}</span>
-          </label>
-        </div>
-        <div class="mt-5">
-          <button class="rounded-2xl bg-emerald-600 px-4 py-3 text-sm font-semibold text-white" @click="createUser">创建用户</button>
+
+        <div v-if="!isLogsPage" class="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+          <RouterLink
+            v-for="section in availableConfigSections"
+            :key="section.key"
+            :to="section.route"
+            class="rounded-[26px] border px-4 py-4 transition"
+            :class="activeSection === section.key ? 'border-sky-400 bg-sky-50 text-sky-900 shadow-lg shadow-sky-100' : 'border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:bg-slate-100'"
+          >
+            <div class="text-base font-semibold">{{ section.title }}</div>
+            <div class="mt-1 text-sm text-slate-500">{{ section.description }}</div>
+          </RouterLink>
         </div>
       </section>
 
-      <section v-if="hasScope('user_lifecycle')" class="overflow-hidden rounded-[32px] border border-slate-200 bg-white">
-        <div class="border-b border-slate-100 px-5 py-4 text-lg font-semibold text-slate-900">用户管理</div>
-        <div class="divide-y divide-slate-100">
-          <div v-for="user in state.adminUsers" :key="user.username" class="flex flex-wrap items-center justify-between gap-4 px-5 py-4">
-            <div class="min-w-0 flex-1">
-              <div class="flex flex-wrap items-center gap-2">
-                <div class="font-semibold text-slate-900">{{ user.username }}</div>
-                <span class="rounded-full px-2 py-1 text-xs font-semibold" :class="user.is_super_admin ? 'bg-amber-100 text-amber-700' : (user.is_admin ? 'bg-sky-100 text-sky-700' : 'bg-slate-100 text-slate-600')">{{ roleLabel(user) }}</span>
-                <span v-if="user.is_disabled" class="rounded-full bg-rose-100 px-2 py-1 text-xs font-semibold text-rose-700">已冻结</span>
-              </div>
-              <div class="mt-1 text-sm text-slate-500">云盘占用 {{ formatSize(user.storage) }} / {{ formatSize(user.quota_bytes) }} · 拥有仓库 {{ user.repo_count }} 个</div>
-              <div class="mt-1 text-xs text-slate-400">手机号：{{ user.phone || '未填写' }} · 下放权限：{{ scopeLabelText(user.admin_scopes) }}</div>
+      <section v-if="activeSection === 'users' && hasScope('user_lifecycle')" class="space-y-6">
+        <section class="rounded-[32px] border border-slate-200 bg-white px-6 py-6 shadow-sm">
+          <div class="flex items-center justify-between gap-4">
+            <div>
+              <h3 class="text-xl font-semibold text-slate-900">创建新用户</h3>
+              <p class="mt-2 text-sm text-slate-500">超级管理员可以直接创建账号，并决定是否授予子管理员角色与初始配额。</p>
             </div>
-            <div class="w-full rounded-[28px] bg-slate-50 px-4 py-4">
-              <div class="grid gap-3 lg:grid-cols-2 xl:grid-cols-4">
-                <div class="space-y-2">
-                  <div class="text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">配额</div>
-                  <div class="flex gap-2">
-                    <input v-model="ensureUserDraft(user).quotaMb" type="number" min="1" class="min-w-0 flex-1 rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none" placeholder="MB">
-                    <button class="rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold" @click="saveQuota(user)">保存</button>
-                  </div>
+          </div>
+          <div class="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+            <input v-model="createForm.username" class="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none" placeholder="用户名">
+            <input v-model="createForm.password" type="password" class="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none" placeholder="初始密码">
+            <input v-model="createForm.phone" class="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none" placeholder="手机号">
+            <select v-model="createForm.role" class="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none">
+              <option value="user">普通用户</option>
+              <option value="admin" :disabled="!state.isSuperAdmin">子管理员</option>
+            </select>
+            <input v-model="createForm.quotaMb" type="number" min="1" class="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none" placeholder="配额（MB）">
+          </div>
+          <div v-if="createForm.role === 'admin'" class="mt-4 flex flex-wrap gap-3 rounded-[28px] bg-slate-50 px-4 py-4 text-sm text-slate-600">
+            <label v-for="scope in scopeOptions" :key="scope.value" class="inline-flex items-center gap-2">
+              <input type="checkbox" :checked="createForm.adminScopes.includes(scope.value)" @change="toggleCreateScope(scope.value, $event.target.checked)">
+              <span>{{ scope.label }}</span>
+            </label>
+          </div>
+          <div class="mt-5">
+            <button class="rounded-2xl bg-emerald-600 px-4 py-3 text-sm font-semibold text-white" @click="createUser">创建用户</button>
+          </div>
+        </section>
+
+        <section class="overflow-hidden rounded-[32px] border border-slate-200 bg-white">
+          <div class="border-b border-slate-100 px-5 py-4 text-lg font-semibold text-slate-900">用户管理</div>
+          <div class="divide-y divide-slate-100">
+            <div v-for="user in state.adminUsers" :key="user.username" class="flex flex-wrap items-center justify-between gap-4 px-5 py-4">
+              <div class="min-w-0 flex-1">
+                <div class="flex flex-wrap items-center gap-2">
+                  <div class="font-semibold text-slate-900">{{ user.username }}</div>
+                  <span class="rounded-full px-2 py-1 text-xs font-semibold" :class="user.is_super_admin ? 'bg-amber-100 text-amber-700' : (user.is_admin ? 'bg-sky-100 text-sky-700' : 'bg-slate-100 text-slate-600')">{{ roleLabel(user) }}</span>
+                  <span v-if="user.is_disabled" class="rounded-full bg-rose-100 px-2 py-1 text-xs font-semibold text-rose-700">已冻结</span>
                 </div>
-                <div class="space-y-2">
-                  <div class="text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">重置密码</div>
-                  <div class="flex gap-2">
-                    <input v-model="ensureUserDraft(user).password" type="password" class="min-w-0 flex-1 rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none" placeholder="新密码">
-                    <button class="rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold" @click="resetPassword(user)">重置</button>
-                  </div>
-                </div>
-                <div class="space-y-2">
-                  <div class="text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">资产转移</div>
-                  <div class="flex gap-2">
-                    <input v-model="ensureUserDraft(user).transferTo" class="min-w-0 flex-1 rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none" placeholder="接收账号">
-                    <button class="rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold" @click="transferAssets(user)">转移</button>
-                  </div>
-                </div>
-                <div class="space-y-2">
-                  <div class="text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">账号状态</div>
-                  <div class="flex gap-2">
-                    <button class="rounded-2xl px-3 py-2 text-sm font-semibold" :class="user.is_disabled ? 'bg-emerald-600 text-white' : 'border border-slate-200 bg-white text-slate-700'" @click="toggleDisabled(user)">
-                      {{ user.is_disabled ? '恢复账号' : '冻结账号' }}
-                    </button>
-                    <button class="rounded-2xl bg-rose-50 px-3 py-2 text-sm font-semibold text-rose-600" @click="deleteUser(user)">删除用户</button>
-                  </div>
-                </div>
+                <div class="mt-1 text-sm text-slate-500">云盘占用 {{ formatSize(user.storage) }} / {{ formatSize(user.quota_bytes) }} · 拥有仓库 {{ user.repo_count }} 个</div>
+                <div class="mt-1 text-xs text-slate-400">手机号：{{ user.phone || '未填写' }} · 下放权限：{{ scopeLabelText(user.admin_scopes) }}</div>
               </div>
-              <div v-if="state.isSuperAdmin && !user.is_super_admin" class="mt-4 rounded-[24px] border border-dashed border-slate-200 bg-white px-4 py-4">
-                <div class="grid gap-3 lg:grid-cols-[14rem_1fr_auto]">
-                  <select v-model="ensureUserDraft(user).role" class="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm outline-none">
-                    <option value="user">普通用户</option>
-                    <option value="admin">子管理员</option>
-                  </select>
-                  <div v-if="ensureUserDraft(user).role === 'admin'" class="flex flex-wrap gap-3 text-sm text-slate-600">
-                    <label v-for="scope in scopeOptions" :key="scope.value" class="inline-flex items-center gap-2">
-                      <input type="checkbox" :checked="ensureUserDraft(user).adminScopes.includes(scope.value)" @change="toggleUserScope(user.username, scope.value, $event.target.checked)">
-                      <span>{{ scope.label }}</span>
-                    </label>
+              <div class="w-full rounded-[28px] bg-slate-50 px-4 py-4">
+                <div class="grid gap-3 lg:grid-cols-2 xl:grid-cols-4">
+                  <div class="space-y-2">
+                    <div class="text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">配额</div>
+                    <div class="flex gap-2">
+                      <input v-model="ensureUserDraft(user).quotaMb" type="number" min="1" class="min-w-0 flex-1 rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none" placeholder="MB">
+                      <button class="rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold" @click="saveQuota(user)">保存</button>
+                    </div>
                   </div>
-                  <div v-else class="text-sm text-slate-400">普通用户不持有下放权限。</div>
-                  <button class="rounded-2xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white" @click="saveRole(user)">保存角色</button>
+                  <div class="space-y-2">
+                    <div class="text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">重置密码</div>
+                    <div class="flex gap-2">
+                      <input v-model="ensureUserDraft(user).password" type="password" class="min-w-0 flex-1 rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none" placeholder="新密码">
+                      <button class="rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold" @click="resetPassword(user)">重置</button>
+                    </div>
+                  </div>
+                  <div class="space-y-2">
+                    <div class="text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">资产转移</div>
+                    <div class="flex gap-2">
+                      <input v-model="ensureUserDraft(user).transferTo" class="min-w-0 flex-1 rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none" placeholder="接收账号">
+                      <button class="rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold" @click="transferAssets(user)">转移</button>
+                    </div>
+                  </div>
+                  <div class="space-y-2">
+                    <div class="text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">账号状态</div>
+                    <div class="flex gap-2">
+                      <button class="rounded-2xl px-3 py-2 text-sm font-semibold" :class="user.is_disabled ? 'bg-emerald-600 text-white' : 'border border-slate-200 bg-white text-slate-700'" @click="toggleDisabled(user)">
+                        {{ user.is_disabled ? '恢复账号' : '冻结账号' }}
+                      </button>
+                      <button class="rounded-2xl bg-rose-50 px-3 py-2 text-sm font-semibold text-rose-600" @click="deleteUser(user)">删除用户</button>
+                    </div>
+                  </div>
+                </div>
+                <div v-if="state.isSuperAdmin && !user.is_super_admin" class="mt-4 rounded-[24px] border border-dashed border-slate-200 bg-white px-4 py-4">
+                  <div class="grid gap-3 lg:grid-cols-[14rem_1fr_auto]">
+                    <select v-model="ensureUserDraft(user).role" class="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm outline-none">
+                      <option value="user">普通用户</option>
+                      <option value="admin">子管理员</option>
+                    </select>
+                    <div v-if="ensureUserDraft(user).role === 'admin'" class="flex flex-wrap gap-3 text-sm text-slate-600">
+                      <label v-for="scope in scopeOptions" :key="scope.value" class="inline-flex items-center gap-2">
+                        <input type="checkbox" :checked="ensureUserDraft(user).adminScopes.includes(scope.value)" @change="toggleUserScope(user.username, scope.value, $event.target.checked)">
+                        <span>{{ scope.label }}</span>
+                      </label>
+                    </div>
+                    <div v-else class="text-sm text-slate-400">普通用户不持有下放权限。</div>
+                    <button class="rounded-2xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white" @click="saveRole(user)">保存角色</button>
+                  </div>
                 </div>
               </div>
             </div>
           </div>
-        </div>
-        <div v-if="!state.adminUsers.length" class="px-4 py-12 text-center text-sm text-slate-500">
-          暂无用户数据。
-        </div>
+          <div v-if="!state.adminUsers.length" class="px-4 py-12 text-center text-sm text-slate-500">
+            暂无用户数据。
+          </div>
+        </section>
       </section>
 
-      <section v-if="hasScope('audit_logs')" class="overflow-hidden rounded-[32px] border border-slate-200 bg-white">
+      <section v-if="activeSection === 'repos' && hasScope('audit_logs')" class="overflow-hidden rounded-[32px] border border-slate-200 bg-white">
         <div class="border-b border-slate-100 px-5 py-4 text-lg font-semibold text-slate-900">仓库管理</div>
         <div class="divide-y divide-slate-100">
           <div v-for="repo in state.adminRepos" :key="repo.id" class="flex flex-wrap items-center justify-between gap-4 px-5 py-4">
@@ -467,7 +579,7 @@ export default {
         </div>
       </section>
 
-      <section v-if="hasScope('share_governance')" class="overflow-hidden rounded-[32px] border border-slate-200 bg-white">
+      <section v-if="activeSection === 'shares' && hasScope('share_governance')" class="overflow-hidden rounded-[32px] border border-slate-200 bg-white">
         <div class="border-b border-slate-100 px-5 py-4 text-lg font-semibold text-slate-900">全局公开分享链接</div>
         <div class="divide-y divide-slate-100">
           <div v-for="share in state.adminShares" :key="share.code" class="px-5 py-4">
@@ -491,7 +603,7 @@ export default {
         </div>
       </section>
 
-      <section v-if="hasScope('storage_cleanup')" class="overflow-hidden rounded-[32px] border border-slate-200 bg-white">
+      <section v-if="activeSection === 'recycle' && hasScope('storage_cleanup')" class="overflow-hidden rounded-[32px] border border-slate-200 bg-white">
         <div class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 px-5 py-4">
           <div>
             <div class="text-lg font-semibold text-slate-900">全局回收站</div>
@@ -513,7 +625,7 @@ export default {
         </div>
       </section>
 
-      <section v-if="hasScope('audit_logs')" class="overflow-hidden rounded-[32px] border border-slate-200 bg-white">
+      <section v-if="activeSection === 'logs' && hasScope('audit_logs')" class="overflow-hidden rounded-[32px] border border-slate-200 bg-white">
         <div class="border-b border-slate-100 px-5 py-4 text-lg font-semibold text-slate-900">操作日志审计</div>
         <div class="divide-y divide-slate-100">
           <div v-for="log in state.auditLogs" :key="log.id" class="flex flex-wrap items-start justify-between gap-4 px-5 py-4 text-sm">

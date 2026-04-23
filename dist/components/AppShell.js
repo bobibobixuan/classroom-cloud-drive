@@ -67,8 +67,12 @@ export default {
       }
     };
 
-    const openNotification = async (notification) => {
+    const closeNotifications = () => {
       notificationsOpen.value = false;
+    };
+
+    const openNotification = async (notification) => {
+      closeNotifications();
       if (notification?.link) {
         await router.push(notification.link);
       }
@@ -83,6 +87,7 @@ export default {
       unreadCount,
       toggleChat,
       toggleNotifications,
+      closeNotifications,
       markNotificationsRead,
       openNotification,
     };
@@ -112,41 +117,6 @@ export default {
                 <button class="rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700" @click="toggleChat(true)">
                   聊天
                 </button>
-
-                <div v-if="notificationsOpen" class="fixed inset-x-4 top-24 z-[70] overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-2xl shadow-slate-200/70 md:inset-x-auto md:right-6 md:top-24 md:w-full md:max-w-md">
-                  <div class="flex items-center justify-between border-b border-slate-200 px-4 py-4">
-                    <div>
-                      <div class="text-sm font-semibold text-slate-900">消息栏</div>
-                      <div class="mt-1 text-xs text-slate-500">任何与你有关的审批、协作和权限变化都会在这里提示。</div>
-                    </div>
-                    <button class="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-600" @click="markNotificationsRead">
-                      全部已读
-                    </button>
-                  </div>
-
-                  <div v-if="state.notifications.length" class="max-h-[26rem] overflow-y-auto px-3 py-3">
-                    <button
-                      v-for="item in state.notifications"
-                      :key="item.id"
-                      class="mb-2 block w-full rounded-3xl border px-4 py-3 text-left transition last:mb-0"
-                      :class="item.is_read ? 'border-slate-200 bg-slate-50 text-slate-600' : 'border-sky-200 bg-sky-50 text-slate-800'"
-                      @click="openNotification(item)"
-                    >
-                      <div class="flex items-start justify-between gap-3">
-                        <div>
-                          <div class="text-sm font-semibold">{{ item.title }}</div>
-                          <div v-if="item.detail" class="mt-1 text-sm leading-6">{{ item.detail }}</div>
-                        </div>
-                        <span v-if="!item.is_read" class="mt-1 inline-flex h-2.5 w-2.5 shrink-0 rounded-full bg-rose-500"></span>
-                      </div>
-                      <div class="mt-2 text-xs text-slate-400">{{ item.created_at }}</div>
-                    </button>
-                  </div>
-
-                  <div v-else class="px-4 py-10 text-center text-sm text-slate-500">
-                    暂时没有新通知。
-                  </div>
-                </div>
               </div>
             </div>
 
@@ -161,6 +131,42 @@ export default {
           >
             <ChatDrawer />
           </div>
+        </div>
+      </div>
+
+      <div v-if="notificationsOpen" class="fixed inset-0 z-[60] bg-slate-950/10" @click="closeNotifications"></div>
+      <div v-if="notificationsOpen" class="fixed inset-x-4 top-24 z-[70] overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-2xl shadow-slate-200/70 md:inset-x-auto md:right-6 md:top-24 md:w-full md:max-w-md">
+        <div class="flex items-center justify-between border-b border-slate-200 px-4 py-4">
+          <div>
+            <div class="text-sm font-semibold text-slate-900">消息栏</div>
+            <div class="mt-1 text-xs text-slate-500">任何与你有关的审批、协作和权限变化都会在这里提示。</div>
+          </div>
+          <button class="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-600" @click="markNotificationsRead">
+            全部已读
+          </button>
+        </div>
+
+        <div v-if="state.notifications.length" class="max-h-[26rem] overflow-y-auto px-3 py-3">
+          <button
+            v-for="item in state.notifications"
+            :key="item.id"
+            class="mb-2 block w-full rounded-3xl border px-4 py-3 text-left transition last:mb-0"
+            :class="item.is_read ? 'border-slate-200 bg-slate-50 text-slate-600' : 'border-sky-200 bg-sky-50 text-slate-800'"
+            @click="openNotification(item)"
+          >
+            <div class="flex items-start justify-between gap-3">
+              <div>
+                <div class="text-sm font-semibold">{{ item.title }}</div>
+                <div v-if="item.detail" class="mt-1 text-sm leading-6">{{ item.detail }}</div>
+              </div>
+              <span v-if="!item.is_read" class="mt-1 inline-flex h-2.5 w-2.5 shrink-0 rounded-full bg-rose-500"></span>
+            </div>
+            <div class="mt-2 text-xs text-slate-400">{{ item.created_at }}</div>
+          </button>
+        </div>
+
+        <div v-else class="px-4 py-10 text-center text-sm text-slate-500">
+          暂时没有新通知。
         </div>
       </div>
 
