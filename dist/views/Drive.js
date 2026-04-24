@@ -3,12 +3,22 @@ import { actions, isBusy, state } from '../store.js';
 import { confirmAction, showToast, toggleChat } from '../ui.js';
 import { formatSize, stopEvent } from '../utils.js';
 
+const homeAnnouncementLines = [
+  '欢迎使用课堂云盘与项目仓库。',
+  '个人文件请先上传到云盘，再根据需要设置聊天分享权限。',
+  '进入项目仓库后，如需共同维护资料，请先提交加入申请并等待审核。',
+  '审批结果、协作变更和公告更新会显示在右上角通知中，请及时查看。',
+];
+
+const getHomeAnnouncementSeenKey = (username) => `ccd-home-announcement-seen:${username || 'guest'}:v1`;
+
 export default {
   name: 'DriveView',
   setup() {
     const batchShareScope = ref('public');
     const fileInput = ref(null);
     const dragActive = ref(false);
+    const homeAnnouncementOpen = ref(false);
 
     const selectedCount = computed(() => state.selectedDriveFiles.length);
     const allSelected = computed({
@@ -28,7 +38,22 @@ export default {
       }
     };
 
-    onMounted(load);
+    const maybeOpenHomeAnnouncement = () => {
+      const storageKey = getHomeAnnouncementSeenKey(state.user);
+      if (window.localStorage.getItem(storageKey) !== '1') {
+        homeAnnouncementOpen.value = true;
+      }
+    };
+
+    onMounted(async () => {
+      await load();
+      maybeOpenHomeAnnouncement();
+    });
+
+    const closeHomeAnnouncement = () => {
+      window.localStorage.setItem(getHomeAnnouncementSeenKey(state.user), '1');
+      homeAnnouncementOpen.value = false;
+    };
 
     const openPicker = () => fileInput.value?.click();
 
@@ -136,10 +161,13 @@ export default {
       batchShareScope,
       fileInput,
       dragActive,
+      homeAnnouncementOpen,
+      homeAnnouncementLines,
       selectedCount,
       allSelected,
       isBusy,
       formatSize,
+      closeHomeAnnouncement,
       openPicker,
       onInputChange,
       onDrop,
@@ -253,6 +281,31 @@ export default {
           你的个人云盘还没有文件。上传后可以决定是否允许通过聊天提取码分享。
         </div>
       </section>
+
+      <div v-if="homeAnnouncementOpen" class="fixed inset-0 z-[120] flex items-center justify-center bg-slate-950/45 px-4" @click.self="closeHomeAnnouncement">
+        <div class="w-full max-w-2xl rounded-[32px] border border-slate-200 bg-white p-6 shadow-2xl md:p-7">
+          <div class="flex items-start justify-between gap-4">
+            <div>
+              <div class="text-sm font-medium uppercase tracking-[0.24em] text-sky-600">Workspace Notice</div>
+              <h3 class="mt-2 text-2xl font-bold text-slate-900">系统公告</h3>
+              <p class="mt-2 text-sm text-slate-500">首次进入主页时展示一次</p>
+            </div>
+            <button class="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-semibold text-slate-600" @click="closeHomeAnnouncement">关闭</button>
+          </div>
+
+          <div class="mt-5 rounded-[28px] border border-slate-200 bg-slate-50 px-5 py-5">
+            <ol class="space-y-3 text-sm leading-7 text-slate-700">
+              <li v-for="(line, index) in homeAnnouncementLines" :key="line">
+                {{ index + 1 }}. {{ line }}
+              </li>
+            </ol>
+          </div>
+
+          <div class="mt-5 flex justify-end">
+            <button class="rounded-2xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white" @click="closeHomeAnnouncement">我知道了</button>
+          </div>
+        </div>
+      </div>
     </div>
   `,
 };

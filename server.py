@@ -4,6 +4,7 @@ import base64
 import binascii
 import importlib.metadata
 import json
+import mimetypes
 import re
 import shutil
 import sqlite3
@@ -424,9 +425,10 @@ def build_attachment_headers(filename: str):
 
 
 def build_attachment_response(file_path: str, download_name: str):
+    media_type, _ = mimetypes.guess_type(download_name)
     return FileResponse(
         file_path,
-        media_type="application/octet-stream",
+        media_type=media_type or "application/octet-stream",
         headers=build_attachment_headers(download_name),
     )
 

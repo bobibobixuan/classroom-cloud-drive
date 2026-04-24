@@ -26,11 +26,19 @@ export default {
     const unreadCount = computed(() => state.notificationUnreadCount || 0);
     const accountDisplay = computed(() => splitAccountDisplay(state.user, state.realName));
     let refreshTimer = null;
+    let hasHydratedNotifications = false;
 
     const refreshHeaderState = async () => {
       if (!state.token) return;
+      const previousUnread = state.notificationUnreadCount || 0;
       try {
         await Promise.all([actions.refreshIdentity(), actions.loadNotifications()]);
+        const nextUnread = state.notificationUnreadCount || 0;
+        if (hasHydratedNotifications && nextUnread > previousUnread) {
+          const delta = nextUnread - previousUnread;
+          showToast(`你有 ${delta} 条新通知，请及时处理。`, 'info');
+        }
+        hasHydratedNotifications = true;
       } catch (error) {
         if (error?.code !== 'AUTH_EXPIRED') {
           console.error(error);
@@ -38,9 +46,22 @@ export default {
       }
     };
 
+    const syncNotificationsNow = () => {
+      if (!state.token) return;
+      refreshHeaderState();
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        syncNotificationsNow();
+      }
+    };
+
     onMounted(async () => {
       await refreshHeaderState();
-      refreshTimer = window.setInterval(refreshHeaderState, 15000);
+      refreshTimer = window.setInterval(refreshHeaderState, 8000);
+      window.addEventListener('focus', syncNotificationsNow);
+      document.addEventListener('visibilitychange', handleVisibilityChange);
     });
 
     onUnmounted(() => {
@@ -48,6 +69,8 @@ export default {
         window.clearInterval(refreshTimer);
         refreshTimer = null;
       }
+      window.removeEventListener('focus', syncNotificationsNow);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
     });
 
     const toggleNotifications = async () => {

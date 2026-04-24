@@ -4,6 +4,16 @@ import { confirmAction, showToast } from '../ui.js';
 import { formatSize } from '../utils.js';
 import { useRoute, useRouter } from '../deps.js';
 
+const standardRepoNotice = [
+  '欢迎进入本仓库。',
+  '请先查看文件区中的现有资料，再决定是否上传新版本。',
+  '如需参与维护，请先提交加入申请，待拥有者或管理员审核通过后再进行上传、删除等操作。',
+  '审批结果、协作变更和公告更新会出现在右上角通知中，请及时查看。',
+  '上传前请确认命名规范与版本是否重复，避免覆盖有效资料。',
+].join('\n');
+
+const getRepoNoticeSeenKey = (repoId) => `ccd-repo-notice-seen:${repoId}`;
+
 export default {
   name: 'RepoDetailView',
   setup() {
@@ -15,6 +25,8 @@ export default {
     const announcementDraft = ref('');
     const fileInput = ref(null);
     const dragActive = ref(false);
+    const entryNoticeOpen = ref(false);
+    const repoLogModalOpen = ref(false);
 
     const repo = computed(() => state.activeRepo?.repo || null);
     const files = computed(() => state.activeRepo?.files || []);
@@ -29,12 +41,34 @@ export default {
     const canCancelJoinRequest = computed(() => myJoinRequest.value?.status === 'pending');
     const canLeaveRepo = computed(() => repo.value?.my_role === 'collaborator');
     const fileColumnName = computed(() => files.value.some((file) => String(file.path || '').includes('/')) ? '路径' : '文件名');
+    const memberSummary = computed(() => {
+      const ownerCount = members.value.filter((member) => member.role === 'owner').length;
+      return {
+        total: members.value.length,
+        ownerCount,
+        collaboratorCount: Math.max(0, members.value.length - ownerCount),
+      };
+    });
+    const entryNoticeTitle = computed(() => repo.value?.announcement ? '仓库公告' : '入库须知');
+    const entryNoticeBody = computed(() => {
+      const content = (repo.value?.announcement || '').trim();
+      return content || standardRepoNotice;
+    });
+    const latestRepoLog = computed(() => repoLogs.value[0] || null);
+
+    const maybeOpenEntryNotice = (repoId) => {
+      if (!repoId) return;
+      const seenKey = getRepoNoticeSeenKey(repoId);
+      const hasSeen = window.localStorage.getItem(seenKey) === '1';
+      entryNoticeOpen.value = !hasSeen;
+    };
 
     const load = async () => {
       try {
         const data = await actions.loadRepoDetail(route.params.id);
         visibility.value = data.repo.visibility;
         announcementDraft.value = data.repo.announcement || '';
+        maybeOpenEntryNotice(data.repo.id);
       } catch (error) {
         showToast(error.message || '加载仓库失败', 'error');
         router.push('/repos/mine');
@@ -162,6 +196,26 @@ export default {
       }
     };
 
+    const useStandardAnnouncement = () => {
+      announcementDraft.value = standardRepoNotice;
+      showToast('已填入标准公告，可继续修改后保存', 'success');
+    };
+
+    const closeEntryNotice = () => {
+      if (repo.value?.id) {
+        window.localStorage.setItem(getRepoNoticeSeenKey(repo.value.id), '1');
+      }
+      entryNoticeOpen.value = false;
+    };
+
+    const openRepoLogs = () => {
+      repoLogModalOpen.value = true;
+    };
+
+    const closeRepoLogs = () => {
+      repoLogModalOpen.value = false;
+    };
+
     const openPicker = () => fileInput.value?.click();
 
     const uploadFiles = async (fileList) => {
@@ -224,10 +278,17 @@ export default {
       canCancelJoinRequest,
       canLeaveRepo,
       fileColumnName,
+      memberSummary,
       formatSize,
+      entryNoticeOpen,
+      entryNoticeTitle,
+      entryNoticeBody,
+      repoLogModalOpen,
+      latestRepoLog,
       router,
       saveVisibility,
       saveAnnouncement,
+      useStandardAnnouncement,
       submitMember,
       removeMember,
       submitJoinRequest,
@@ -241,6 +302,9 @@ export default {
       onDrop,
       downloadFile,
       deleteFile,
+      closeEntryNotice,
+      openRepoLogs,
+      closeRepoLogs,
     };
   },
   template: `
@@ -268,132 +332,225 @@ export default {
         </div>
       </section>
 
-      <section class="grid gap-4 xl:grid-cols-2">
-        <div class="rounded-[32px] border border-slate-200 bg-white px-6 py-6 shadow-sm">
-          <h3 class="text-xl font-semibold text-slate-900">仓库设置</h3>
-          <p class="mt-2 text-sm leading-7 text-slate-500">私有仓库也能邀请协作者共同维护。</p>
-          <div class="mt-5 grid gap-3 text-sm text-slate-500 sm:grid-cols-2">
-            <div class="rounded-3xl bg-slate-50 px-4 py-4">文件 {{ repo.file_count }}</div>
-            <div class="rounded-3xl bg-slate-50 px-4 py-4">成员 {{ repo.member_count }}</div>
-          </div>
-          <div v-if="canManage" class="mt-5">
-            <label class="mb-2 block text-sm font-semibold text-slate-700">仓库可见性</label>
-            <select class="w-full rounded-3xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none" :value="visibility" @change="saveVisibility($event.target.value)">
-              <option value="private">私有仓库</option>
-              <option value="public">公开到大厅</option>
-            </select>
-          </div>
-          <div v-if="canManage" class="mt-5">
-            <label class="mb-2 block text-sm font-semibold text-slate-700">编辑仓库公告</label>
-            <textarea v-model="announcementDraft" rows="4" class="w-full rounded-3xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none" placeholder="公告会展示给所有能查看该仓库的人"></textarea>
-            <div class="mt-3 flex justify-end">
-              <button class="rounded-2xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white" @click="saveAnnouncement">保存公告</button>
+      <section class="grid gap-6 xl:grid-cols-[minmax(0,1.45fr)_minmax(22rem,0.95fr)]">
+        <div class="space-y-6">
+          <section class="overflow-hidden rounded-[32px] border border-slate-200 bg-white shadow-sm">
+            <div class="flex flex-wrap items-start justify-between gap-4 border-b border-slate-100 px-6 py-5">
+              <div>
+                <h3 class="text-xl font-semibold text-slate-900">文件区</h3>
+                <p class="mt-2 text-sm leading-7 text-slate-500">这里展示当前仓库的全部资料，可直接下载、上传或删除文件。</p>
+              </div>
+              <div class="grid gap-2 text-sm text-slate-500 sm:grid-cols-3">
+                <div class="rounded-3xl bg-slate-50 px-4 py-3">文件 {{ repo.file_count }}</div>
+                <div class="rounded-3xl bg-slate-50 px-4 py-3">成员 {{ memberSummary.total }}</div>
+                <div class="rounded-3xl bg-slate-50 px-4 py-3">{{ repo.visibility === 'public' ? '公开协作' : '私有协作' }}</div>
+              </div>
             </div>
-          </div>
+
+            <div v-if="canWrite" class="border-b border-slate-100 px-6 py-5">
+              <div class="rounded-[28px] border-2 border-dashed px-6 py-6 transition" :class="dragActive ? 'border-sky-500 bg-sky-50' : 'border-sky-200 bg-gradient-to-br from-sky-50 to-emerald-50'" @click="openPicker" @dragenter.prevent="dragActive = true" @dragover.prevent="dragActive = true" @dragleave.prevent="dragActive = false" @drop="onDrop">
+                <input ref="fileInput" class="hidden" type="file" multiple @change="onInputChange">
+                <div class="text-lg font-semibold text-slate-900">上传文件到仓库</div>
+                <div class="mt-2 text-sm text-slate-600">支持点击选择或直接拖拽文件到此区域。</div>
+              </div>
+            </div>
+
+            <div class="overflow-x-auto">
+              <table class="min-w-full divide-y divide-slate-200 text-sm">
+                <thead class="bg-slate-50 text-left text-slate-500">
+                  <tr>
+                    <th class="px-4 py-3 font-semibold">{{ fileColumnName }}</th>
+                    <th class="px-4 py-3 font-semibold">大小</th>
+                    <th class="px-4 py-3 font-semibold">最近维护者</th>
+                    <th class="px-4 py-3 font-semibold">更新时间</th>
+                    <th class="px-4 py-3 font-semibold">操作</th>
+                  </tr>
+                </thead>
+                <tbody v-if="files.length" class="divide-y divide-slate-100">
+                  <tr v-for="file in files" :key="file.path" class="hover:bg-slate-50/80">
+                    <td class="px-4 py-3 font-medium text-slate-900">{{ file.path }}</td>
+                    <td class="px-4 py-3 text-slate-500">{{ formatSize(file.size) }}</td>
+                    <td class="px-4 py-3 text-slate-500">{{ file.updated_by || '未知' }}</td>
+                    <td class="px-4 py-3 text-slate-500">{{ file.updated_at || '未知' }}</td>
+                    <td class="px-4 py-3">
+                      <div class="flex flex-wrap gap-2">
+                        <button class="rounded-2xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold" @click="downloadFile(file.path)">下载</button>
+                        <button v-if="canWrite" class="rounded-2xl bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-600" @click="deleteFile(file.path)">删除</button>
+                      </div>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <div v-if="!files.length" class="px-4 py-12 text-center text-sm text-slate-500">
+              这个仓库还没有文件。
+            </div>
+          </section>
+
+          <section v-if="canManage" class="rounded-[32px] border border-slate-200 bg-white px-6 py-6 shadow-sm">
+            <div class="flex flex-wrap items-start justify-between gap-4">
+              <div>
+                <h3 class="text-xl font-semibold text-slate-900">仓库设置</h3>
+                <p class="mt-2 text-sm leading-7 text-slate-500">可在这里维护仓库公开范围，并编辑成员进入仓库时看到的公告内容。</p>
+              </div>
+              <button class="rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700" @click="useStandardAnnouncement">填入标准公告</button>
+            </div>
+            <div class="mt-5 grid gap-5 xl:grid-cols-[15rem_minmax(0,1fr)]">
+              <div>
+                <label class="mb-2 block text-sm font-semibold text-slate-700">仓库可见性</label>
+                <select class="w-full rounded-3xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none" :value="visibility" @change="saveVisibility($event.target.value)">
+                  <option value="private">私有仓库</option>
+                  <option value="public">公开到大厅</option>
+                </select>
+              </div>
+              <div>
+                <label class="mb-2 block text-sm font-semibold text-slate-700">编辑仓库公告</label>
+                <textarea v-model="announcementDraft" rows="5" class="w-full rounded-3xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none" placeholder="公告会展示给所有能查看该仓库的人"></textarea>
+                <div class="mt-3 flex justify-end">
+                  <button class="rounded-2xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white" @click="saveAnnouncement">保存公告</button>
+                </div>
+              </div>
+            </div>
+          </section>
         </div>
 
-        <div class="rounded-[32px] border border-slate-200 bg-white px-6 py-6 shadow-sm">
-          <h3 class="text-xl font-semibold text-slate-900">协作权限</h3>
-          <div v-if="canManage" class="mt-5 flex flex-wrap gap-3">
-            <input v-model="newMemberName" class="min-w-[14rem] flex-1 rounded-3xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none" placeholder="输入用户名，添加为协作者">
-            <button class="rounded-2xl bg-sky-600 px-4 py-3 text-sm font-semibold text-white" @click="submitMember">添加协作者</button>
-          </div>
-          <div v-else-if="canRequestJoin" class="mt-5 space-y-3 rounded-3xl border border-slate-200 bg-slate-50 px-4 py-4">
-            <div class="text-sm text-slate-600">如果你想一起维护这个仓库，可以先提交申请，由仓库拥有者或管理员审核。</div>
-            <textarea v-model="joinMessage" rows="3" class="w-full rounded-3xl border border-slate-200 bg-white px-4 py-3 text-sm outline-none" placeholder="可选：补充一句申请理由"></textarea>
-            <div class="flex flex-wrap items-center justify-between gap-3">
-              <div v-if="myJoinRequest" class="text-sm text-slate-500">当前状态：{{ joinRequestStatusLabel(myJoinRequest) }}<span v-if="myJoinRequest.updated_at"> · {{ myJoinRequest.updated_at }}</span></div>
-              <div class="flex flex-wrap gap-2">
-                <button v-if="canSubmitJoinRequest" class="rounded-2xl bg-sky-600 px-4 py-3 text-sm font-semibold text-white" @click="submitJoinRequest">{{ myJoinRequest ? '重新申请加入维护' : '申请加入维护' }}</button>
-                <button v-if="canCancelJoinRequest" class="rounded-2xl bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-600" @click="cancelJoinRequest">取消申请</button>
-              </div>
-            </div>
-          </div>
-          <div v-if="canLeaveRepo" class="mt-5 rounded-3xl border border-rose-200 bg-rose-50 px-4 py-4">
-            <div class="text-sm text-rose-700">你当前是这个仓库的协作者，可以主动退出维护。</div>
-            <div class="mt-3 flex justify-end">
-              <button class="rounded-2xl bg-rose-600 px-4 py-3 text-sm font-semibold text-white" @click="leaveRepo">退出维护</button>
-            </div>
-          </div>
-          <div class="mt-5 space-y-3">
-            <div v-for="member in members" :key="member.username" class="flex flex-wrap items-center justify-between gap-3 rounded-3xl border border-slate-200 bg-slate-50 px-4 py-4">
+        <aside class="space-y-6">
+          <section class="rounded-[32px] border border-slate-200 bg-white px-6 py-6 shadow-sm">
+            <div class="flex flex-wrap items-start justify-between gap-3">
               <div>
-                <div class="font-semibold text-slate-900">{{ member.username }}</div>
-                <div class="mt-1 text-sm text-slate-500">{{ member.role === 'owner' ? '拥有者' : '协作者' }}</div>
+                <h3 class="text-xl font-semibold text-slate-900">协作权限</h3>
+                <p class="mt-2 text-sm leading-7 text-slate-500">这里可以查看拥有者、协作者和待审核申请，并处理成员维护权限。</p>
               </div>
-              <button v-if="canManage && member.role !== 'owner'" class="rounded-2xl bg-rose-50 px-3 py-2 text-sm font-semibold text-rose-600" @click="removeMember(member.username)">移除</button>
-            </div>
-          </div>
-          <div v-if="canManage && joinRequests.length" class="mt-5 space-y-3 rounded-3xl border border-dashed border-slate-200 bg-slate-50 px-4 py-4">
-            <div class="text-sm font-semibold text-slate-900">待审核申请</div>
-            <div v-for="request in joinRequests" :key="request.username" class="flex flex-wrap items-center justify-between gap-3 rounded-3xl border border-slate-200 bg-white px-4 py-4">
-              <div>
-                <div class="font-semibold text-slate-900">{{ request.username }}</div>
-                <div class="mt-1 text-sm text-slate-500">{{ request.message || '未填写申请理由' }}</div>
-                <div class="mt-1 text-xs text-slate-400">提交于 {{ request.created_at || '未知时间' }}</div>
-              </div>
-              <div class="flex flex-wrap gap-2">
-                <button class="rounded-2xl bg-emerald-600 px-3 py-2 text-sm font-semibold text-white" @click="reviewJoinRequest(request.username, 'approve')">通过</button>
-                <button class="rounded-2xl bg-rose-50 px-3 py-2 text-sm font-semibold text-rose-600" @click="reviewJoinRequest(request.username, 'reject')">拒绝</button>
+              <div class="rounded-[24px] bg-slate-50 px-4 py-3 text-sm text-slate-600">
+                <div>拥有者 {{ memberSummary.ownerCount }}</div>
+                <div class="mt-1">协作者 {{ memberSummary.collaboratorCount }}</div>
               </div>
             </div>
-          </div>
-        </div>
-      </section>
 
-      <section v-if="canWrite" class="rounded-[32px] border-2 border-dashed px-6 py-7 transition" :class="dragActive ? 'border-sky-500 bg-sky-50' : 'border-sky-200 bg-gradient-to-br from-sky-50 to-emerald-50'" @click="openPicker" @dragenter.prevent="dragActive = true" @dragover.prevent="dragActive = true" @dragleave.prevent="dragActive = false" @drop="onDrop">
-        <input ref="fileInput" class="hidden" type="file" multiple @change="onInputChange">
-        <div class="text-lg font-semibold text-slate-900">上传文件到仓库</div>
-      </section>
+            <div v-if="canManage" class="mt-5 flex flex-wrap gap-3">
+              <input v-model="newMemberName" class="min-w-[14rem] flex-1 rounded-3xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none" placeholder="输入用户名，添加为协作者">
+              <button class="rounded-2xl bg-sky-600 px-4 py-3 text-sm font-semibold text-white" @click="submitMember">添加协作者</button>
+            </div>
 
-      <section class="overflow-hidden rounded-[32px] border border-slate-200 bg-white">
-        <div class="overflow-x-auto">
-          <table class="min-w-full divide-y divide-slate-200 text-sm">
-            <thead class="bg-slate-50 text-left text-slate-500">
-              <tr>
-                <th class="px-4 py-3 font-semibold">{{ fileColumnName }}</th>
-                <th class="px-4 py-3 font-semibold">大小</th>
-                <th class="px-4 py-3 font-semibold">最近维护者</th>
-                <th class="px-4 py-3 font-semibold">更新时间</th>
-                <th class="px-4 py-3 font-semibold">操作</th>
-              </tr>
-            </thead>
-            <tbody v-if="files.length" class="divide-y divide-slate-100">
-              <tr v-for="file in files" :key="file.path" class="hover:bg-slate-50/80">
-                <td class="px-4 py-3 font-medium text-slate-900">{{ file.path }}</td>
-                <td class="px-4 py-3 text-slate-500">{{ formatSize(file.size) }}</td>
-                <td class="px-4 py-3 text-slate-500">{{ file.updated_by || '未知' }}</td>
-                <td class="px-4 py-3 text-slate-500">{{ file.updated_at || '未知' }}</td>
-                <td class="px-4 py-3">
-                  <div class="flex flex-wrap gap-2">
-                    <button class="rounded-2xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold" @click="downloadFile(file.path)">下载</button>
-                    <button v-if="canWrite" class="rounded-2xl bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-600" @click="deleteFile(file.path)">删除</button>
+            <div v-else-if="canRequestJoin" class="mt-5 space-y-3 rounded-3xl border border-slate-200 bg-slate-50 px-4 py-4">
+              <div class="text-sm text-slate-600">如果你想一起维护这个仓库，可以先提交申请，由仓库拥有者或管理员审核。</div>
+              <textarea v-model="joinMessage" rows="3" class="w-full rounded-3xl border border-slate-200 bg-white px-4 py-3 text-sm outline-none" placeholder="可选：补充一句申请理由"></textarea>
+              <div class="flex flex-wrap items-center justify-between gap-3">
+                <div v-if="myJoinRequest" class="text-sm text-slate-500">当前状态：{{ joinRequestStatusLabel(myJoinRequest) }}<span v-if="myJoinRequest.updated_at"> · {{ myJoinRequest.updated_at }}</span></div>
+                <div class="flex flex-wrap gap-2">
+                  <button v-if="canSubmitJoinRequest" class="rounded-2xl bg-sky-600 px-4 py-3 text-sm font-semibold text-white" @click="submitJoinRequest">{{ myJoinRequest ? '重新申请加入维护' : '申请加入维护' }}</button>
+                  <button v-if="canCancelJoinRequest" class="rounded-2xl bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-600" @click="cancelJoinRequest">取消申请</button>
+                </div>
+              </div>
+            </div>
+
+            <div v-if="canLeaveRepo" class="mt-5 rounded-3xl border border-rose-200 bg-rose-50 px-4 py-4">
+              <div class="text-sm text-rose-700">你当前是这个仓库的协作者，可以主动退出维护。</div>
+              <div class="mt-3 flex justify-end">
+                <button class="rounded-2xl bg-rose-600 px-4 py-3 text-sm font-semibold text-white" @click="leaveRepo">退出维护</button>
+              </div>
+            </div>
+
+            <div class="mt-5 grid gap-3 sm:grid-cols-2">
+              <div v-for="member in members" :key="member.username" class="rounded-[24px] border border-slate-200 bg-slate-50 px-4 py-4">
+                <div class="flex items-start justify-between gap-3">
+                  <div class="min-w-0">
+                    <div class="truncate font-semibold text-slate-900">{{ member.username }}</div>
+                    <div class="mt-1 text-sm text-slate-500">{{ member.role === 'owner' ? '拥有者' : '协作者' }}</div>
                   </div>
-                </td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-        <div v-if="!files.length" class="px-4 py-12 text-center text-sm text-slate-500">
-          这个仓库还没有文件。
-        </div>
+                  <button v-if="canManage && member.role !== 'owner'" class="shrink-0 rounded-2xl bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-600" @click="removeMember(member.username)">移除</button>
+                </div>
+              </div>
+            </div>
+
+            <div v-if="canManage && joinRequests.length" class="mt-5 space-y-3 rounded-3xl border border-dashed border-slate-200 bg-slate-50 px-4 py-4">
+              <div class="text-sm font-semibold text-slate-900">待审核申请</div>
+              <div v-for="request in joinRequests" :key="request.username" class="rounded-3xl border border-slate-200 bg-white px-4 py-4">
+                <div class="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <div class="font-semibold text-slate-900">{{ request.username }}</div>
+                    <div class="mt-1 text-sm text-slate-500">{{ request.message || '未填写申请理由' }}</div>
+                    <div class="mt-1 text-xs text-slate-400">提交于 {{ request.created_at || '未知时间' }}</div>
+                  </div>
+                  <div class="flex flex-wrap gap-2">
+                    <button class="rounded-2xl bg-emerald-600 px-3 py-2 text-sm font-semibold text-white" @click="reviewJoinRequest(request.username, 'approve')">通过</button>
+                    <button class="rounded-2xl bg-rose-50 px-3 py-2 text-sm font-semibold text-rose-600" @click="reviewJoinRequest(request.username, 'reject')">拒绝</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section v-if="canManage" class="rounded-[32px] border border-slate-200 bg-white px-6 py-6 shadow-sm">
+            <div class="flex items-start justify-between gap-4">
+              <div>
+                <h3 class="text-xl font-semibold text-slate-900">仓库日志</h3>
+                <p class="mt-2 text-sm leading-7 text-slate-500">记录成员、公告、文件和权限相关的仓库操作。</p>
+              </div>
+              <button class="rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700" @click="openRepoLogs">查看日志</button>
+            </div>
+
+            <div v-if="latestRepoLog" class="mt-5 rounded-[24px] border border-slate-200 bg-slate-50 px-4 py-4">
+              <div class="flex flex-wrap items-center justify-between gap-3">
+                <div class="text-sm font-semibold text-slate-900">{{ repoLogActionLabel(latestRepoLog.action) }}</div>
+                <div class="text-xs text-slate-400">{{ latestRepoLog.created_at }}</div>
+              </div>
+              <div class="mt-2 text-sm text-slate-600">{{ latestRepoLog.actor_username }}</div>
+              <div v-if="latestRepoLog.detail" class="mt-1 text-sm leading-6 text-slate-500">{{ latestRepoLog.detail }}</div>
+            </div>
+
+            <div v-else class="mt-5 rounded-3xl border border-dashed border-slate-200 bg-slate-50 px-4 py-8 text-center text-sm text-slate-500">
+              暂时还没有仓库级管理日志。
+            </div>
+          </section>
+        </aside>
       </section>
+    </div>
 
-      <section v-if="canManage" class="rounded-[32px] border border-slate-200 bg-white px-6 py-6 shadow-sm">
-        <div class="flex items-center justify-between gap-3">
+    <div v-else class="rounded-[32px] border border-dashed border-slate-200 bg-slate-50 px-6 py-12 text-center text-sm text-slate-500">
+      正在加载仓库详情...
+    </div>
+
+    <div v-if="entryNoticeOpen && repo" class="fixed inset-0 z-[120] flex items-center justify-center bg-slate-950/45 px-4" @click.self="closeEntryNotice">
+      <div class="w-full max-w-2xl rounded-[32px] border border-slate-200 bg-white p-6 shadow-2xl md:p-7">
+        <div class="flex items-start justify-between gap-4">
           <div>
-            <h3 class="text-xl font-semibold text-slate-900">管理员日志</h3>
-            <p class="mt-2 text-sm leading-7 text-slate-500">这里只展示仓库级协作操作，普通访问者看不到。</p>
+            <div class="text-sm font-medium uppercase tracking-[0.24em] text-sky-600">Repository Notice</div>
+            <h3 class="mt-2 text-2xl font-bold text-slate-900">{{ entryNoticeTitle }}</h3>
+            <p class="mt-2 text-sm text-slate-500">{{ repo.name }} · {{ repo.owner_username }}</p>
           </div>
+          <button class="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-semibold text-slate-600" @click="closeEntryNotice">关闭</button>
         </div>
 
-        <div v-if="repoLogs.length" class="mt-5 space-y-3">
+        <div class="mt-5 rounded-[28px] border border-slate-200 bg-slate-50 px-5 py-5">
+          <p class="whitespace-pre-wrap text-sm leading-7 text-slate-700">{{ entryNoticeBody }}</p>
+        </div>
+
+        <div class="mt-5 flex flex-wrap justify-end gap-3">
+          <button v-if="canManage" class="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700" @click="useStandardAnnouncement">插入标准公告</button>
+          <button class="rounded-2xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white" @click="closeEntryNotice">进入仓库</button>
+        </div>
+      </div>
+    </div>
+
+    <div v-if="repoLogModalOpen && canManage" class="fixed inset-0 z-[121] flex items-center justify-center bg-slate-950/45 px-4" @click.self="closeRepoLogs">
+      <div class="w-full max-w-3xl rounded-[32px] border border-slate-200 bg-white p-6 shadow-2xl md:p-7">
+        <div class="flex items-start justify-between gap-4">
+          <div>
+            <div class="text-sm font-medium uppercase tracking-[0.24em] text-sky-600">Repository Logs</div>
+            <h3 class="mt-2 text-2xl font-bold text-slate-900">仓库日志</h3>
+            <p class="mt-2 text-sm text-slate-500">{{ repo.name }} 的协作与维护记录</p>
+          </div>
+          <button class="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-semibold text-slate-600" @click="closeRepoLogs">关闭</button>
+        </div>
+
+        <div v-if="repoLogs.length" class="mt-5 max-h-[26rem] space-y-3 overflow-y-auto pr-1">
           <div v-for="log in repoLogs" :key="log.id" class="rounded-3xl border border-slate-200 bg-slate-50 px-4 py-4">
             <div class="flex flex-wrap items-center justify-between gap-3">
-              <div class="text-sm font-semibold text-slate-900">{{ log.actor_username }}</div>
+              <div class="text-sm font-semibold text-slate-900">{{ repoLogActionLabel(log.action) }}</div>
               <div class="text-xs text-slate-400">{{ log.created_at }}</div>
             </div>
-            <div class="mt-2 text-sm font-medium text-slate-700">{{ repoLogActionLabel(log.action) }}</div>
+            <div class="mt-2 text-sm text-slate-600">操作人：{{ log.actor_username }}</div>
             <div v-if="log.detail" class="mt-1 text-sm leading-6 text-slate-500">{{ log.detail }}</div>
           </div>
         </div>
@@ -401,11 +558,7 @@ export default {
         <div v-else class="mt-5 rounded-3xl border border-dashed border-slate-200 bg-slate-50 px-4 py-8 text-center text-sm text-slate-500">
           暂时还没有仓库级管理日志。
         </div>
-      </section>
-    </div>
-
-    <div v-else class="rounded-[32px] border border-dashed border-slate-200 bg-slate-50 px-6 py-12 text-center text-sm text-slate-500">
-      正在加载仓库详情...
+      </div>
     </div>
   `,
 };
