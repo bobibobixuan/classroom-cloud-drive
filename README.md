@@ -50,6 +50,9 @@ Regular admins only see the sections allowed by their delegated admin scopes. Su
 - Entry: [main.go](main.go)
 - Role: embeds the [dist](dist) frontend and proxies all /api/* requests.
 - Default listen address: :80, override with CCD_LISTEN_ADDR.
+- Hostname access: use the deployment machine hostname on the LAN when name resolution is available.
+- IP fallback: use the LAN IPv4 addresses printed by the Go proxy startup log.
+- Startup log prints hostname, all detected LAN IPv4 addresses, loopback URL, listen address, listen port, backend mode, and backend target.
 - Backend target priority:
   1. CCD_API_BASE_URL
   2. http://127.0.0.1:4321
@@ -144,7 +147,7 @@ go run .
 
 1. If the UI does not match local code, check the Go proxy startup log to confirm which backend URL is active.
 2. If :8088 cannot start, change the port or release the process using it.
-3. If pan.local is unavailable, use the LAN IP printed by the Go proxy.
+3. If hostname access is unavailable on a client, use one of the LAN IP addresses printed by the Go proxy startup log.
 4. If admin changes appear ineffective, confirm the Go proxy is pointing at the same backend instance whose classroom.db you inspected.
 
 ### Repository Layout
@@ -211,6 +214,9 @@ Before pushing, make sure git status only shows intended source changes.
 - 入口文件：[main.go](main.go)
 - 作用：嵌入 [dist](dist) 前端并代理所有 /api/* 请求。
 - 默认监听：:80，可通过 CCD_LISTEN_ADDR 覆盖。
+- 主机名访问：局域网里优先使用当前部署机器的主机名访问。
+- IP 兜底：主机名不可用时，使用启动日志里打印的局域网 IPv4 地址访问。
+- 启动日志会打印主机名、全部局域网 IPv4、本机回环地址、监听地址、监听端口、后端模式和后端目标。
 - 后端目标优先级：
   1. CCD_API_BASE_URL
   2. http://127.0.0.1:4321
@@ -305,8 +311,9 @@ go run .
 
 1. 页面表现和本地代码不一致时，优先看 Go 代理启动日志里的实际 API 地址。
 2. :8088 无法启动时，换端口或结束占用进程。
-3. pan.local 无法访问时，优先使用 Go 代理输出的局域网 IP。
+3. 主机名访问不可用时，直接改用 Go 代理启动日志里打印的局域网 IPv4 地址访问。
 4. 管理员操作看似未生效时，先确认当前 Go 代理连接的后端，是否就是你查看过 classroom.db 的那一份实例。
+
 
 ### 仓库结构
 

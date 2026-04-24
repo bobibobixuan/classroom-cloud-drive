@@ -12,7 +12,17 @@ const standardRepoNotice = [
   '上传前请确认命名规范与版本是否重复，避免覆盖有效资料。',
 ].join('\n');
 
-const getRepoNoticeSeenKey = (repoId) => `ccd-repo-notice-seen:${repoId}`;
+const buildNoticeVersion = (content) => {
+  let hash = 0;
+  for (const char of String(content || '')) {
+    hash = ((hash * 31) + char.charCodeAt(0)) >>> 0;
+  }
+  return hash.toString(36);
+};
+
+const getRepoNoticeSeenKey = (username, repoId, noticeBody) => {
+  return `ccd-repo-notice-seen:${username || 'guest'}:${repoId}:${buildNoticeVersion(noticeBody)}`;
+};
 
 export default {
   name: 'RepoDetailView',
@@ -56,9 +66,16 @@ export default {
     });
     const latestRepoLog = computed(() => repoLogs.value[0] || null);
 
-    const maybeOpenEntryNotice = (repoId) => {
-      if (!repoId) return;
-      const seenKey = getRepoNoticeSeenKey(repoId);
+    const getViewerName = () => state.user || window.localStorage.getItem('user') || 'guest';
+
+    const getRepoNoticeBody = (repoRecord) => {
+      const content = String(repoRecord?.announcement || '').trim();
+      return content || standardRepoNotice;
+    };
+
+    const maybeOpenEntryNotice = (repoRecord) => {
+      if (!repoRecord?.id) return;
+      const seenKey = getRepoNoticeSeenKey(getViewerName(), repoRecord.id, getRepoNoticeBody(repoRecord));
       const hasSeen = window.localStorage.getItem(seenKey) === '1';
       entryNoticeOpen.value = !hasSeen;
     };
@@ -68,7 +85,7 @@ export default {
         const data = await actions.loadRepoDetail(route.params.id);
         visibility.value = data.repo.visibility;
         announcementDraft.value = data.repo.announcement || '';
-        maybeOpenEntryNotice(data.repo.id);
+        maybeOpenEntryNotice(data.repo);
       } catch (error) {
         showToast(error.message || '加载仓库失败', 'error');
         router.push('/repos/mine');
@@ -203,7 +220,7 @@ export default {
 
     const closeEntryNotice = () => {
       if (repo.value?.id) {
-        window.localStorage.setItem(getRepoNoticeSeenKey(repo.value.id), '1');
+        window.localStorage.setItem(getRepoNoticeSeenKey(getViewerName(), repo.value.id, entryNoticeBody.value), '1');
       }
       entryNoticeOpen.value = false;
     };

@@ -10,7 +10,17 @@ const homeAnnouncementLines = [
   '审批结果、协作变更和公告更新会显示在右上角通知中，请及时查看。',
 ];
 
-const getHomeAnnouncementSeenKey = (username) => `ccd-home-announcement-seen:${username || 'guest'}:v1`;
+const buildNoticeVersion = (content) => {
+  let hash = 0;
+  for (const char of String(content || '')) {
+    hash = ((hash * 31) + char.charCodeAt(0)) >>> 0;
+  }
+  return hash.toString(36);
+};
+
+const homeAnnouncementVersion = buildNoticeVersion(homeAnnouncementLines.join('\n'));
+
+const getHomeAnnouncementSeenKey = (username) => `ccd-home-announcement-seen:${username || 'guest'}:${homeAnnouncementVersion}`;
 
 export default {
   name: 'DriveView',
@@ -38,8 +48,10 @@ export default {
       }
     };
 
+    const getViewerName = () => state.user || window.localStorage.getItem('user') || 'guest';
+
     const maybeOpenHomeAnnouncement = () => {
-      const storageKey = getHomeAnnouncementSeenKey(state.user);
+      const storageKey = getHomeAnnouncementSeenKey(getViewerName());
       if (window.localStorage.getItem(storageKey) !== '1') {
         homeAnnouncementOpen.value = true;
       }
@@ -51,7 +63,7 @@ export default {
     });
 
     const closeHomeAnnouncement = () => {
-      window.localStorage.setItem(getHomeAnnouncementSeenKey(state.user), '1');
+      window.localStorage.setItem(getHomeAnnouncementSeenKey(getViewerName()), '1');
       homeAnnouncementOpen.value = false;
     };
 

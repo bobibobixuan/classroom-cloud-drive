@@ -12,10 +12,10 @@ import (
 	"net/url"
 	"os"
 	"path"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
-
-	"github.com/hashicorp/mdns"
 )
 
 //go:embed all:dist
@@ -68,18 +68,124 @@ func resolveAPIBaseURL() (string, string) {
 	return defaultRemoteAPIURL, "remote"
 }
 
-func getOutboundIP() string {
-	conn, err := net.Dial("udp", "8.8.8.8:80")
+func resolveMachineHostname() string {
+	host, err := os.Hostname()
 	if err != nil {
-		return "127.0.0.1"
+		return ""
 	}
-	defer conn.Close()
-	return conn.LocalAddr().(*net.UDPAddr).IP.String()
+	host = strings.TrimSpace(strings.ToLower(host))
+	host = strings.TrimSuffix(host, ".")
+	return host
+}
+
+func getLANIPv4s() []net.IP {
+	interfaces, err := net.Interfaces()
+	if err != nil {
+		return nil
+	}
+
+	uniqueIPs := make(map[string]net.IP)
+	for _, iface := range interfaces {
+		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+
+		addrs, err := iface.Addrs()
+		if err != nil {
+			continue
+		}
+
+		for _, addr := range addrs {
+			var ip net.IP
+			switch value := addr.(type) {
+			case *net.IPNet:
+				ip = value.IP
+			case *net.IPAddr:
+				ip = value.IP
+			}
+
+			ip = ip.To4()
+			if ip == nil || ip.IsLoopback() || ip.IsUnspecified() {
+				continue
+			}
+
+			uniqueIPs[ip.String()] = ip
+		}
+	}
+
+	if len(uniqueIPs) == 0 {
+		return nil
+	}
+
+	sortedKeys := make([]string, 0, len(uniqueIPs))
+	for key := range uniqueIPs {
+		sortedKeys = append(sortedKeys, key)
+	}
+	sort.Strings(sortedKeys)
+
+	ips := make([]net.IP, 0, len(sortedKeys))
+	for _, key := range sortedKeys {
+		ips = append(ips, uniqueIPs[key])
+	}
+	return ips
+}
+
+func parseListenPort(listenAddr string) int {
+	trimmed := strings.TrimSpace(listenAddr)
+	if trimmed == "" {
+		return 80
+	}
+	if strings.HasPrefix(trimmed, ":") {
+		if port, err := strconv.Atoi(strings.TrimPrefix(trimmed, ":")); err == nil && port > 0 {
+			return port
+		}
+	}
+	if !strings.Contains(trimmed, ":") {
+		if port, err := strconv.Atoi(trimmed); err == nil && port > 0 {
+			return port
+		}
+	}
+	_, portText, err := net.SplitHostPort(trimmed)
+	if err == nil {
+		if port, convErr := strconv.Atoi(portText); convErr == nil && port > 0 {
+			return port
+		}
+	}
+	return 80
+}
+
+func formatHTTPURL(host string, port int) string {
+	if port == 80 {
+		return fmt.Sprintf("http://%s", host)
+	}
+	return fmt.Sprintf("http://%s:%d", host, port)
+}
+
+func formatIPv4List(ips []net.IP) string {
+	values := make([]string, 0, len(ips))
+	for _, ip := range ips {
+		values = append(values, ip.String())
+	}
+	return strings.Join(values, ", ")
+}
+
+func apiModeLabel(source string) string {
+	switch source {
+	case "env":
+		return "自定义 API 代理模式"
+	case "local":
+		return "本地联调模式"
+	default:
+		return "中转代理模式"
+	}
 }
 
 func main() {
 	remoteAPIURL, apiSource := resolveAPIBaseURL()
 	listenAddr := getEnv("CCD_LISTEN_ADDR", defaultListenAddr)
+	listenPort := parseListenPort(listenAddr)
+	machineHost := resolveMachineHostname()
+	lanIPs := getLANIPv4s()
 
 	remoteURL, err := url.Parse(remoteAPIURL)
 	if err != nil || remoteURL.Scheme == "" || remoteURL.Host == "" {
@@ -88,41 +194,19 @@ func main() {
 
 	fmt.Println("=======================================")
 	fmt.Println("课堂云盘前端代理已启动")
-	switch apiSource {
-	case "env":
-		fmt.Println("模式：自定义 API 代理模式（静态页面 + 指定 API 转发）")
-	case "local":
-		fmt.Println("模式：本地联调模式（静态页面 + 本地 FastAPI 转发）")
-	default:
-		fmt.Println("模式：中转代理模式（静态页面 + 远端 API 转发）")
-	}
+	fmt.Printf("模式：%s\n", apiModeLabel(apiSource))
 	fmt.Println("=======================================")
 
-	// 1. 启动局域网域名广播 (mDNS)
-	host, _ := os.Hostname()
-	info := []string{"Classroom Pan Server"}
-	service, _ := mdns.NewMDNSService(host, "_http._tcp", "local.", "", 80, nil, info)
-	server, err := mdns.NewServer(&mdns.Config{Zone: service})
-	if err == nil {
-		defer server.Shutdown()
-		fmt.Printf("[mDNS] 已广播局域网域名: http://%s.local\n", strings.ToLower(host))
-	}
-
-	// 2. 反向代理配置 (携带伪装的 Host 防止 502)
 	proxy := httputil.NewSingleHostReverseProxy(remoteURL)
 	originalDirector := proxy.Director
 	proxy.Director = func(req *http.Request) {
 		originalDirector(req)
-		req.Host = remoteURL.Host // 极其关键：防止 Lucky 拦截
+		req.Host = remoteURL.Host
 	}
-
-	// 👇👇👇 核心魔法：无视 HTTPS 证书校验强制连接 👇👇👇
 	proxy.Transport = &http.Transport{
 		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
 	}
-	// 👆👆👆 核心魔法结束 👆👆👆
 
-	// 3. 路由分发
 	staticFS, err := fs.Sub(frontendStatic, "dist")
 	if err != nil {
 		log.Fatal("前端包加载失败:", err)
@@ -162,21 +246,30 @@ func main() {
 		serveIndex(w, r)
 	})
 
-	// 4. 打印机房使用指南
 	fmt.Println("---------------------------------------")
-	fmt.Println("访问入口")
-	fmt.Println("- 首选域名: http://pan.local")
-	fmt.Printf("- 备用地址: http://%s\n", getOutboundIP())
-	fmt.Printf("- 当前监听: http://127.0.0.1%s\n", listenAddr)
-	fmt.Printf("- 远端 API: %s\n", remoteAPIURL)
-	if apiSource == "local" {
-		fmt.Println("提示：已自动检测到本地后端，当前页面会直接使用本机 server.py。")
-	} else if apiSource == "remote" {
-		fmt.Println("提示：未检测到本地后端，当前仍回退到远端 API。")
-		fmt.Println("提示：如需联调本地后端，请先启动 server.py，或设置 CCD_API_BASE_URL。")
+	fmt.Println("连接信息")
+	if machineHost != "" {
+		fmt.Printf("- 主机名: %s\n", machineHost)
+		fmt.Printf("- 主机名访问: %s\n", formatHTTPURL(machineHost, listenPort))
+	} else {
+		fmt.Println("- 主机名: 未获取")
 	}
-	fmt.Println("提示：学生机只访问本机地址；只要这台中转机能连上远端 API 即可。")
-	fmt.Println("提示：如果 pan.local 打不开，请把当前网络切到“专用网络”。")
+	if len(lanIPs) > 0 {
+		fmt.Printf("- 局域网 IPv4: %s\n", formatIPv4List(lanIPs))
+		for index, ip := range lanIPs {
+			fmt.Printf("- IP 访问 %d: %s\n", index+1, formatHTTPURL(ip.String(), listenPort))
+		}
+	} else {
+		fmt.Println("- 局域网 IPv4: 未检测到可用地址")
+	}
+	fmt.Printf("- 本机回环: %s\n", formatHTTPURL("127.0.0.1", listenPort))
+	fmt.Printf("- 监听地址: %s\n", listenAddr)
+	fmt.Printf("- 监听端口: %d\n", listenPort)
+	fmt.Printf("- 后端模式: %s\n", apiModeLabel(apiSource))
+	fmt.Printf("- 当前后端: %s\n", remoteAPIURL)
+	fmt.Printf("- 后端主机: %s\n", remoteURL.Host)
+	fmt.Println("- 前端根路径: /")
+	fmt.Println("- API 前缀: /api/")
 	fmt.Println("---------------------------------------")
 
 	log.Fatal(http.ListenAndServe(listenAddr, nil))
