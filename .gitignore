@@ -32,6 +32,8 @@ repo_storage/
 # 本地配置
 .env
 .env.*
+/ip.txt
+/name.csv
 
 # 编辑器、系统文件与日志
 .vscode/
